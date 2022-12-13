@@ -1,0 +1,3326 @@
+---
+title: Multi country analysis of COVID-19 patients admiited to MSF supported health
+  facilities between Jan 2020 to december 2021
+date: "`r format(Sys.Date())`"
+output:
+  word_document: default
+  pdf_document: default
+  html_document:
+    df_print: paged
+bibliography: citation.bib
+
+---
+
+\newpage
+
+```{r setup,include=FALSE,  results='hide', message=FALSE, warning=FALSE}
+## hide all code chunks in the output, but show errors
+knitr::opts_chunk$set(echo = FALSE,       # hide all code chunks in output
+                      error = TRUE,       # show errors if they appear, but don't stop
+                      fig.width = 6*1.25, # Figure width
+                      fig.height = 6,      # Figure height
+                      warning = FALSE,
+                      message = FALSE
+                     )
+## set default NA to - in output, define figure width/height
+options(knitr.kable.NA = "-")
+
+## set the environment TZ
+Sys.setenv(TZ='GMT')
+
+## Installing required packages for this template
+required_packages <- c("knitr",       # create output docs
+                       "here",        # find your files
+                       "janitor",
+                       "dplyr",       # clean/shape data
+                       "forcats",     # clean/shape data
+                       "stringr",     # clean text
+                       "rio",         # read in data
+                       "ggplot2",     # create plots and charts
+                       "patchwork",   # combine plots in one
+                       "linelist",    # Functions for cleaning/standardising data/dates
+                       "matchmaker",  # dictionary-based standardization of variables
+                       "incidence",   # create epicurves
+                       "aweek",       # define epi weeks
+                       "epitrix",     # epi helpers and tricks
+                       "sf",          # encode spatial vector data
+                       "ggspatial",   # plot maps
+                       "mondate",
+                       "xts",         # moving \naverages
+                       "zoo",         # moving \naverages
+                       "classInt",    # specifying breaks for maps
+                       "excel.link",  # opening password protected files
+                       "askpass",     # opening password protected files
+                       "tsibble",     # time series data
+                       "slider",      # time series data
+                       "tidyr",       # long/long adjustments to data
+                       "gt", 
+                       "gtsummary",  # make nice tables
+                       "data.table",   # for taking last and first values from data frames
+                       "patchwork",   # combining plots together
+                       "TTR",        # calculate the moving average
+                       "anytime",     # POSIX Date converter
+                       "matrixStats", # standard deviation matrix calculator 
+                       #"tmaptools",   # for getting geocoordinates (lon/lat) based on place names
+                       "ISOweek",
+                       "growthrates",
+                       "glue",
+                       "ggplot2",
+                       "scales",
+                       "gridExtra",
+                       "ggpubr",
+                       "grid",
+                       "sandwich",
+                       "rgeos",
+                       "countrycode",
+                       "officer",
+                       "gt",
+                       "webshot",
+                       "english",
+                       "ggthemes",
+                       "purrr",
+                       "readxl",
+                       "readr",
+                       "broom",
+                       "tidyverse",
+                       "lmtest",
+                       "parameters",
+                       "see",
+                       "sitrep")
+for (pkg in required_packages) {
+  # install packages if not already present
+  if (!pkg %in% rownames(installed.packages())) {
+    install.packages(pkg)
+  }
+  
+  # load packages to this current session 
+  library(pkg, character.only = TRUE)
+}
+
+
+# Set the left and right censoring for date of consultation. 
+# The right-censoring create also the week value and the folders where to save the outputs
+
+date_min_report <-  as.Date("2020-01-01")
+date_max_report <- as.Date("2021-12-31")
+
+
+palette_Reds4U <- c('#fcae91', '#fb6a4a','#de2d26', '#a50f15', '#969696')
+
+x_date_labels <- "1 months"
+x_date_labels_faceted <- "2 months"
+
+#devtools::install_github("crsh/citr") # insert citations thriugh addins
+
+```
+
+
+```{r import functions}
+source(here::here("functions/read_msf_data.R"))
+source(here::here("functions/aaa_get_latest_data.R"))
+source(here::here("functions/aaa_file_name_helpers.R"))
+source(here::here("functions/current_data.R"))
+source(here::here("functions/utils_modelling.R"))
+source(here::here("functions/utils_vis.R"))
+source(here::here("functions/setup.R"))
+```
+
+
+```{r import data set, warning = FALSE, message = FALSE,show_col_types=FALSE}
+### Read in data from work sheet ---------------------------------------------------------------
+df_labels_comcond <- rio::import(here::here("Data", "labels_comcond.csv")) 
+dta_dictionary <- rio::import(here::here("Data", "data.dictionary.xlsx"))
+dta_linelist <- rio::import(here::here("Data", "msf_covid19_linelist_global_2022-03-05.csv"))
+
+```
+
+
+```{r clean data}
+## add Continent of the countries according to world bank region
+dta_linelist<-dta_linelist %>% 
+  filter(date_event<=date_max_report) %>% 
+  mutate(Continent=case_when(country%in%c("AFG","BGD","IND","PAK","MMR") ~"South Asia",
+    country%in%c("ETH",
+        "CAF", "BFA","CMR","TCD","COD","GRC",
+        "GIN","KEN","MWI","MLI", "NER","NGA","SDN","SSD","SOM","TZA","UGA")~"Sub Saharan Africa",
+    country%in%c("COL","HTI","HND","MEX","PER","VEN","BRA")~"Latin America & Caribbean",
+    country%in%c("GRC","KGZ","TJK","UKR","BEL","BLR")~"Europe & Central Asia",
+    country%in%c("IRQ","JOR","LBN","SYR","TUN","YEM")~"Middle East & North Africa",
+         TRUE~country)) 
+
+dta_linelist<-dta_linelist %>% 
+ mutate(Country=case_when(country=="AFG"~"Afghanistan",#
+                           country=="BGD"~"Bangladesh",#
+                           country=="IND"~"India",#
+                           country=="PAK"~"Pakistan",#
+                           country=="ETH"~"Ethiopia",#
+                           country=="CAF"~"Central Africa",#
+                           country=="BFA"~"Burkina faso",#
+                           country=="CMR"~"Cameron",#
+                           country=="TCD"~"Chad",#
+                           country=="COD"~"DRC",#
+                           country=="GRC"~"Greece",#
+                           country=="GIN"~"Guniea",#
+                           country=="KEN"~"Kenya",#
+                           country=="MWI"~"Malawi",#
+                           country=="MLI"~"Mali",
+                           country=="NER"~"Niger",
+                           country=="NGA"~"Nigeria",
+                           country=="SDN"~"Sudan",
+                           country=="SSD"~"South Sudan",
+                           country=="SOM"~"Somalia",
+                           country=="TZA"~"Tanzania",
+                           country=="UGA"~"Uganda",
+                           country=="COL"~"Colombia",
+                           country=="HTI"~"Haiti",
+                           country=="HND"~"Honduras",
+                           country=="MEX"~"Mexico",
+                           country=="PER"~"Peru",
+                           country=="VEN"~"Venezuela",
+                           country=="BRA"~"Brazil",
+                           country=="KGZ"~"Kazagistan",
+                           country=="TJK"~"Tajikistan",
+                           country=="UKR"~"Ukraine",
+                           country=="BEL"~"Belgium",#
+                           country=="BLR"~"Belarus",
+                           country=="IRQ"~"Iraq",
+                           country=="JOR"~"Jordan",
+                           country=="LBN"~"Lebanon",
+                           country=="SYR"~"Syria",
+                           country=="TUN"~"Tunisia",
+                           country=="YEM"~"Yemen",
+                           country=="MMR"~"Myanmar"
+                           ))
+```
+
+# INTRODUCTION 
+
+
+
+
+## Objectives
+
+1.	To describe socio-demographic and clinical characteristics of COVID-19 patients  by age group, pregnancy status, and geographical region .
+2.	To describe risk factors for severe disease and death of COVID-19 patients by age group, pregnancy status and geographical region in MSF settings.
+
+
+# Methedology
+## Study area:
+
+This analysis is multi country data analysis of COVID-19 cases treated in MSF. Countries included in this analysis were from five world bank geographic areas, Middle East and North Africa (MENA), Europe and Central Asia (ECA), South Asia (SA), Sub Saharan Africa (SSA) and Latin America and Caribbean (LAC).
+```{r world bank economic region countries classification }
+
+## read the sf
+location="https://github.com/pubpolicy/PubPolicy-543/raw/main/"
+file="WB_countries_Admin0_10m.json"
+
+linkToFile=paste0(location,file)
+## connect to create the location of the web dourced data base
+linkToFile=paste0(location,file)
+
+mapWorld=read_sf(linkToFile)
+
+# plot original map
+base=ggplot(data=mapWorld) + geom_sf(fill='grey90',
+                                     color=NA) + theme_classic()
+
+titleText='Distribution of countries by World Bank region data updated 2020'
+sourceText='Source: World Bank'
+colMap= base + geom_sf(data=mapWorld,
+                       aes(fill=REGION_WB),
+                       color=NA) + labs(title=titleText,
+                     x =NULL,
+                     y = NULL,
+                     caption = sourceText)
+
+
+colMap
+
+```
+
+## Data collection
+
+In this analysis, we have used data from Covid-19 excel line list developed by MSF-epicentre. The line list was developed based on the WHO and CDC case definitions and was the same line list through out all the countries where MSF was supporting the COVID-19 response. It was deployed to the 41 countries where MSF was supporting the COVID-19 response and data was collected using the CIF developed for the line list. Data collection was optional in most of the countries. Hence, the number of variables routinely collected were different from country to country. 
+
+### Inclusion criteria
+
+In this analysis we have included only confirmed admitted cases of all countries where MSF Work. MSF has been supporting Covid-19 response in 41 countries, of which 34 of the countries have confirmed admitted patients. All countries with any confirmed admitted patients are included in this analysis. Confirmed COVID-19 case were defined as cases which were tested positive on PCR test or rapid test. Admitted confirmed cases were cases managed as inpatients in the MSF supported MSF supported facility.
+
+### Exclusion criteria 
+
+Countries with no case of admitted confirmed cases are excluded from the the analysis. in the regression analysis call cases with missing values if the selected variables for the regression analysis are automatically excluded from inclusion in the regression analysis. Only patients with known outcome were included in the regression analysis and the estimation of the case fatality and mortality rate.
+
+## Statistical software used
+
+We have used R software version 4.1.3 to analyse this data [@rsoftware]. Package gt summary version 1.5.2 was used in most of the descriptive analysis [@gtsummary] and sitrep package from the R4Epis website [@sitrep]. 
+
+## Analysis
+
+Exploratory data analysis was done for the raw data from all the countries. Data was cleaned for inconsistencies and correction of of conditional missing values was done.The data has come with hudge missing values from all countries. Hence, the missing values were treated as missing values, and number of events for each variable of interest is reported.
+Descriptive analysis was conducted for for socio-demographic and clinical characteristics of patients based on different  geographic regions according to the world bank, age groups (Categorized), gender, pregnancy and clinical characteristics. We have used the latest World bank geographic region to categorize the countries in to the different geographic regions []. 
+
+Regression analysis was performed to determine risk factors for COVID-19 mortality. All variables with known relation to COVID-19 patients survival and other variables were tested for any significant relation with COVID-19 mortality in the uni variate and multivariate analysis. All variables with anticipated relation and variables known by literature to have significant relation with the COVID-19 outcome were included in the uni-variate analysis. Patients with known COVID-19 outcome (Died, Cured and Sent back home) were included in the regression analysis. Died patients were coded as 1 (event) while cured and sent back home patients were assigned to 0. Crude odds ratio and p-value were calculated and variables with p-value of 0.25 were passed to the multivariate regression analysis. In addition, variables with known association to COVID-19 outcome but p-value higher than 0.25 were also passed to the multivariate regression models regardless of the the p value.
+In the multivariate fitting, many of the variables were automatically excluded from the model due high number of missing values and some variables were excluded by the model due to the contrast error of the minimum cell value after removing the observations with missing values.The AIC value was used to fit the final model of the multivariate analysis using the package stepAIC including both forward and backward methods [].Covariance was checked using the VIF from the gt summary package. 
+Model fitness was assessed using the AIC value, Hosmer and Lemshow test and classification table. Finally, con founders were controlled for all existing variables (* many variables have been removed due to missing values) and effect modification was checked.
+
+            
+\newpage
+
+# Result
+## Descriptive analysis of all COVID consultaions
+
+MSF is an international humanitarian organization is working over 70 countries worldwide. During the COVID-19 pandemic, MSF have supported many projects in over 40 counters from case management in hospitals to community activities in COVID-19 prevention and control. We have been collecting COVID-19 data from our health facilities all over the countries we have supported with the COVID-19 case management. Between Jan 2020 to Dec 31st 2021, there were a total of `r nrow(dta_linelist)` COVID-19 consultations in 41 countries where MSF has supported with the control of the pandemic. `r fmt_count(dta_linelist, MSF_covid_status == "Confirmed")` confirmed, `r fmt_count(dta_linelist, MSF_covid_status == "Not a case")` tested negative, `r fmt_count(dta_linelist, MSF_covid_status == "Probable")` probable cases, `r fmt_count(dta_linelist, MSF_covid_status == "Not a suspect")` not suspected after screening.
+
+The highest COVID consultations were from South Asia `r fmt_count(dta_linelist, Continent == "South Asia")` cases followed by middle east `r fmt_count(dta_linelist, Continent == "Latin America & Caribbean")`, Middle east and north Africa `r fmt_count(dta_linelist, Continent == "Middle East & NOrth Africa")` and sub Saharan Africa `r fmt_count(dta_linelist, Continent == "Sub Saharan Africa")` (fig 1, map1).
+
+```{r epicurve of all cases in the countries}
+dta_linelist<-dta_linelist %>% 
+  mutate( epi_week_consultation = as.Date(yearweek(MSF_date_consultation)))  
+
+tbl_epicurve_status <- dta_linelist%>% 
+  dplyr::count(MSF_covid_status, epi_week_consultation)
+
+hist_epicurve_status <- tbl_epicurve_status %>% 
+  ggplot(aes(epi_week_consultation, n, fill = MSF_covid_status)) +
+  geom_col() +
+  ggthemes::scale_fill_tableau(name = "Status", palette = "Tableau 20")+
+  scale_x_date(name = "Week of Consultation", 
+               date_breaks = x_date_labels,
+               labels = scales::label_date_short(),
+               date_labels = "%V", 
+               expand = expansion(mult = c(0.01, 0.01)),
+               sec.axis = ggplot2::sec_axis(trans = ~ as.Date(.))) + #labels = function(x) format(x, "%b-%Y") +
+  scale_y_continuous(name = "Patients", expand = expansion(mult = c(0, 0.02))) +
+  theme_light() + 
+  theme(legend.position = 'top', panel.grid.major.x = element_blank(), panel.grid.minor.x = element_blank())
+
+ # hist_epicurve_status
+
+```
+
+
+<!-- Histograms BY CONTINENT of patients COVID status -->
+
+```{r hist-COVID-status-facet-continent, fig.cap = 'Fig 1.Weekly number of consultations (including admission) by COVID status, \nin each continent where MSF is operating', fig.width=10,fig.height=8,fig.align='default'}
+
+tbl_epicurve_status_continent <- dta_linelist %>%
+  dplyr::count(Continent, MSF_covid_status, epi_week_consultation)
+
+
+hist_epicurve_status_continent <- tbl_epicurve_status_continent %>% 
+  ggplot(aes(epi_week_consultation, n, fill = MSF_covid_status)) +
+  facet_wrap(vars(Continent), scales = 'free_y',ncol = 2) +
+  geom_col() +
+  ggthemes::scale_fill_tableau(name = NULL, palette = "Tableau 20") +
+  scale_x_date(name = "Week of Consultation", 
+               date_breaks = x_date_labels_faceted,
+               labels = scales::label_date_short(),
+                date_labels = "%V",
+               expand = expansion(mult = c(0.01, 0.01)),
+               sec.axis = ggplot2::sec_axis(trans = ~ as.Date(.))) + #labels = function(x) format(x, "%b-%Y")
+  scale_y_continuous(name = "Patients", expand = expansion(mult = c(0, 0.02))) +
+  labs(y = "Patients") +
+  theme_light() +
+  theme(legend.position = 'top', panel.grid.major.x = element_blank(), panel.grid.minor.x = element_blank())
+
+hist_epicurve_status_continent
+```
+
+Countries with higher consultation numbers including COVID triage cases were Afghanistan 67,304(32%) of the total consultations, Syria 20,349 (9.6%) of the consultations, Bangladesh 14,579 (6.9%) of the consultations,  , South Sudan 12989 (6.1%) of the consultations, Malawi 12615 (5.9%) and Yemen 12,205 (5.8%) of the consultations. The positivist rate from the total consultations was higher in Bangladesh 99.4%, Belarus and Belgium 98.3% each, Brazil 98.1% , Burkina Faso 92.5% and Cameron 91.6%.
+
+** Shall we exclude Greece and Belgium?
+** Drop the *not a suspect cases*
+
+
+```{r confirmed cases by continent}
+all_cases_continent<-dta_linelist %>% dplyr::select(Continent, MSF_covid_status) %>% tbl_summary(by=MSF_covid_status
+            #statistic =all_categorical()~c("{n}"),
+                #overall_row=T,
+                       )
+
+
+all_cases_country<-dta_linelist %>% 
+  dplyr::select(Country, MSF_covid_status) %>% 
+  tbl_summary(by=MSF_covid_status,
+            #statistic =all_categorical()~c("{n}"),
+                #overall_row=T,
+                       ) %>% 
+  bold_labels() %>% 
+   add_n() %>% 
+   add_overall(last=T) %>% 
+   #sort() %>%  
+   modify_header(label ~ "**Countries**") %>%
+    bold_labels() %>% 
+  modify_caption("All COVID-19 COVID consultation in MSF supported health care facilities between Jan 2020 to Dec 2021.") %>% 
+  as_flex_table()
+theme_gtsummary_compact()
+theme_gtsummary_journal(journal = "jama",set_theme = TRUE)
+
+all_cases_country
+
+#all_cases_country %>%  as_flex_table() %>% 
+#set_table_properties(width = 1, layout = "autofit") %>%  ## this will give immediate word print instead of knitting and table can be copy and pasted
+  #print(preview = "docx")
+```
+
+
+However, the highest number of confirmed cases were coming from the middle east and north Africa and from the the sub Sahara `r inline_text(all_cases_continent, variable='Continent',level='Middle East & North Africa','stat_1')` and `r inline_text(all_cases_continent, variable='Continent', level='Sub Saharan Africa','stat_1')`
+
+```{r Map countries included and the cases}
+library(viridis) # for map color 
+library(RColorBrewer)
+library(maps) # to download the lat and longitude of world map
+
+# Prepare COVID data for joing shape file 
+cases_map_confirmed<-dta_linelist %>% dplyr::select(MSF_covid_status,country) %>% 
+   filter(MSF_covid_status=="Confirmed") %>% 
+group_by(country) %>% 
+  tally() %>% 
+  dplyr::select(country,
+         "Confirmed"=n)
+
+#change the tbl to data frame for data join
+ cases_map_confirmed<-as.data.frame(cases_map_confirmed) 
+### cases tested negative
+cases_map_notcase<-dta_linelist %>% select(MSF_covid_status,country) %>% 
+   filter(MSF_covid_status=="Not a case") %>% 
+group_by(country) %>% 
+  tally() %>% 
+  select(country, "Not_a_case"=n)
+#change the tbl to data frame for data join
+cases_map_notcase<-as.data.frame(cases_map_notcase)
+
+### suspect cases
+cases_map_suspect<-dta_linelist %>% select(Country,MSF_covid_status,country) %>% 
+   filter(MSF_covid_status=="Suspected") %>% 
+group_by(country) %>% 
+  tally() %>% 
+  select(country,"Suspect"=n)
+#change the tbl to data frame for data joing
+cases_map_suspect<-as.data.frame(cases_map_suspect)
+
+### probable cases 
+cases_map_probable<-dta_linelist %>% select(Country,MSF_covid_status,country) %>% 
+   filter(MSF_covid_status=="Probable") %>% 
+group_by(country) %>% 
+  tally() %>% 
+  select(country, "Probabale"=n)
+#change the tbl to data frame for data joining 
+cases_map_probable<-as.data.frame(cases_map_probable)
+
+### not suspected cases 
+    cases_map_notsuspect<-dta_linelist %>% select(MSF_covid_status,country) %>% 
+       filter(MSF_covid_status=="Not a suspect") %>% 
+       group_by(country) %>% 
+         tally() %>% 
+            select(country, "Not_a_suspect"=n)
+
+#change the tbl to data frame for data joing
+   cases_map_notsuspect<-as.data.frame(cases_map_notsuspect)
+
+## Join the number of patients per country by COVID status
+   join1<-dplyr::full_join(cases_map_confirmed,cases_map_suspect, by="country")
+   join2<-full_join(join1, cases_map_notcase, by="country")
+   join3<-full_join(join2, cases_map_probable, by="country")
+   all_cases_per_country<-full_join(join3,cases_map_notsuspect, by="country") %>% 
+     dplyr::select("iso_a3"=country, Confirmed, Not_a_case,Not_a_suspect,Suspect,Probabale) %>% 
+     rowwise() %>% 
+     mutate(`Total COVID consultation`=sum(Confirmed, Suspect,Probabale,na.rm = T))
+#########################################################################################################
+## get the shape file for world map (use the tmap shape file data from the package)
+library(pacman)
+    pacman::p_load(tmap, statR, tidyverse, sp, cartogram)
+     data(World)
+
+## join the COVID_19 data with the world data
+
+   joined_cases_world<-left_join(World,all_cases_per_country, by='iso_a3' )
+
+## Plot the tmap for confirmed cases
+
+    tconsultation<-tm_shape(joined_cases_world) +
+    tm_polygons("Total COVID consultation")+
+  tm_bubbles(size="Confirmed",col='red',scale = 4/3,legend.max.symbol.size = 1)+
+  tm_layout(main.title='Total COVID consultation and confirmed cases',
+            main.title.position = 'center',
+            main.title.fontface = .5, 
+            title.fontface = 2, 
+            panel.label.fontface = 3, 
+            legend.text.fontface = 4,
+            legend.title.size=1,
+            legend.title.fontfamily = "serif")
+
+tconsultation
+
+#####################################################################################
+## using cronopleth map
+# download and import world shp that have longitude and latitude
+  
+#download.file("http://thematicmapping.org/downloads/TM_WORLD_BORDERS_SIMPL-0.3.zip" , destfile="C:/Users/berhe.tesfay/MSF/GRP-EPI-COVID-19 - OCA COVID19 research initiative/code/COVID Regression/Data/shp/world_shape_file.zip")  
+
+# Unzip this file. You can do it with R (as below)
+  #system("unzip DATA/world_shape_file.zip")
+
+# import the data file 
+  #world <- read_sf(here::here("C:/Users/berhe.tesfay/MSF/GRP-EPI-COVID-19 - OCA COVID19 research initiative/code/COVID Regression/Data/shp/TM_WORLD_BORDERS_SIMPL-0.3.shp")) 
+
+#Mutate the country code to join the COVID data
+  #world<-wworld %>% mutate(iso_a3=ISO3)
+
+# join the COVID data set to theworld map
+   #world_joined_chpleth<-left_join(world,all_cases_per_country, by='iso_a3' )
+#then plot
+###############################################################################################
+```
+
+
+```{r plot map in ggplot, echo=FALSE}
+
+# Prepare COVID data for joing shape file 
+gcases_map_confirmed<-dta_linelist %>% select(Country,MSF_covid_status,country) %>% 
+   filter(MSF_covid_status=="Confirmed") %>% 
+group_by(Country) %>% 
+  tally() %>% 
+  select(Country,
+         "Confirmed"=n)
+
+#change the tbl to data frame for data joining
+ gcases_map_confirmed<-as.data.frame(gcases_map_confirmed) 
+###
+gcases_map_notcase<-dta_linelist %>% select(Country,MSF_covid_status,country) %>% 
+   filter(MSF_covid_status=="Not a case") %>% 
+group_by(Country) %>% 
+  tally() %>% 
+  select(Country, "Not_a_case"=n)
+#change the tbl to data frame for data joinig
+gcases_map_notcase<-as.data.frame(gcases_map_notcase)
+
+### ### ### ### ### ### ### ### #
+gcases_map_suspect<-dta_linelist %>% select(Country,MSF_covid_status,country) %>% 
+   filter(MSF_covid_status=="Suspected") %>% 
+group_by(Country) %>% 
+  tally() %>% 
+  select(Country,"Suspect"=n)
+#change the tbl to data frame for data joining
+gcases_map_suspect<-as.data.frame(gcases_map_suspect)
+
+###
+gcases_map_probable<-dta_linelist %>% select(Country,MSF_covid_status,country) %>% 
+   filter(MSF_covid_status=="Probable") %>% 
+group_by(Country) %>% 
+  tally() %>% 
+  select(Country, "Probabale"=n)
+#change the tbl to data frame for data joining
+gcases_map_probable<-as.data.frame(gcases_map_probable)
+
+### ###
+gcases_map_notsuspect<-dta_linelist %>% select(Country,MSF_covid_status,country) %>% 
+   filter(MSF_covid_status=="Not a suspect") %>% 
+group_by(Country) %>% 
+  tally() %>% 
+  select(Country, "Not_a_suspect"=n)
+#change the tbl to data frame for data joing
+gcases_map_notsuspect<-as.data.frame(gcases_map_notsuspect)
+
+## Join the number of patients per country by COVID status
+gjoin1<-dplyr::full_join(gcases_map_confirmed,gcases_map_suspect, by="Country")
+gjoin2<-full_join(gjoin1, gcases_map_notcase, by="Country")
+gjoin3<-full_join(gjoin2, gcases_map_probable, by="Country")
+gall_cases_per_country<-full_join(gjoin3,gcases_map_notsuspect, by="Country") %>% 
+  dplyr::select("iso_a3"=Country, Confirmed, Not_a_case,Not_a_suspect,Suspect,Probabale) %>% 
+  rowwise() %>% 
+  mutate(`Total COVID consultation`=sum(Confirmed, Not_a_case,Not_a_suspect,Suspect,Probabale,na.rm = T))
+
+# Using ggplot2
+#load the data for ggplot2
+mapdata<-map_data("world")
+# join the  data
+mapdata<-as.data.frame(mapdata) %>% 
+  mutate(iso_a3=region)
+joinggplot<-left_join(mapdata,gall_cases_per_country, by='iso_a3' )
+
+#### ao for confirmed cases
+ ggmap_conf<-ggplot(joinggplot,aes(x=long,y=lat, group=group),fill=NA)+
+            geom_polygon(aes(fill = Confirmed), color = "Black")
+ #ggmap_conf<-ggmap_conf + scale_fill_gradient(name = "Confirmed patients", low = "yellow", high =  "red", na.value = "grey50",limits=c(1,8000))+
+ #labs(title="Number of confirmed cases managed by MSF health facilities between \nJan 2020-Dec 2021") +  
+  #theme(axis.text.x = element_blank(),
+        #axis.text.y = element_blank(),
+        #axis.ticks = element_blank(),
+        #axis.title.y=element_blank(),
+        #axis.title.x=element_blank(),
+        #rect = element_blank())
+   #theme_void()  
+#ggmap_conf
+######### map for total consultation
+ggmap_tot<-ggplot(joinggplot,aes(x=long,y=lat, group=group),fill=NA)+
+            geom_polygon(aes(fill = `Total COVID consultation`), color = "Black")
+ #ggmap_tot<-ggmap_tot + scale_fill_gradient(name = "total consultation", low = "yellow", high =  "red", na.value = "grey50",limits=c(1,100000))+
+ #labs(title="Number of confirmed cases managed by MSF health facilities between \nJan 2020-Dec 2021")+  
+  #theme(axis.text.x = element_blank(),
+        #axis.text.y = element_blank(),
+        #axis.ticks = element_blank(),
+        #axis.title.y=element_blank(),
+        #axis.title.x=element_blank(),
+        #rect = element_blank())
+   #theme_void()  
+#ggmap_tot
+
+```
+
+
+<!----change the intentional missing based on condition to No------------>
+
+```{r missing values cleaning and managment}
+
+## If patcourse_asymp~yes , then all missing values in signs and symptoms should be changed to 'No' instead of missing
+
+dta_linelist<-dta_linelist %>% 
+  mutate(MSF_symptom_fever=case_when(patcourse_asymp=="Yes" & is.na(MSF_symptom_fever) ~ "No",
+                                   patcourse_asymp=="Yes" & MSF_symptom_fever=="Unknown" ~ "No",
+                                   TRUE ~ MSF_symptom_fever)) %>% 
+mutate(MSF_symptom_cough=case_when(patcourse_asymp=="Yes" & is.na(MSF_symptom_cough) ~ "No",
+                                   patcourse_asymp=="Yes" & MSF_symptom_cough=="Unknown" ~ "No",
+                                   TRUE ~ MSF_symptom_cough)) %>% 
+mutate(MSF_symptom_breathlessness=case_when(patcourse_asymp=="Yes" & is.na(MSF_symptom_breathlessness) ~ "No",
+                                   patcourse_asymp=="Yes" & MSF_symptom_breathlessness=="Unknown" ~ "No",
+                                   TRUE ~ MSF_symptom_breathlessness)) %>%
+mutate(MSF_symptom_sorethoat=case_when(patcourse_asymp=="Yes" & is.na(MSF_symptom_sorethoat) ~ "No",
+                                   patcourse_asymp=="Yes" & MSF_symptom_sorethoat=="Unknown" ~ "No",
+                                   TRUE ~ MSF_symptom_sorethoat)) %>% 
+mutate(MSF_symptom_chills=case_when(patcourse_asymp=="Yes" & is.na(MSF_symptom_chills) ~ "No",
+                                   patcourse_asymp=="Yes" & MSF_symptom_chills=="Unknown" ~ "No",
+                                   TRUE ~ MSF_symptom_chills)) %>% 
+mutate(MSF_symptom_headache=case_when(patcourse_asymp=="Yes" & is.na(MSF_symptom_headache=="Unknown") ~ "No",
+                                   patcourse_asymp=="Yes" & MSF_symptom_headache=="Unknown" ~ "No",
+                                   TRUE ~ MSF_symptom_headache)) %>% 
+mutate(MSF_symptom_abdominal_pain=case_when(patcourse_asymp=="Yes" & is.na(MSF_symptom_abdominal_pain) ~ "No",
+                                   patcourse_asymp=="Yes" & MSF_symptom_abdominal_pain=="Unknown" ~ "No",
+                                   TRUE ~ MSF_symptom_abdominal_pain)) %>% 
+mutate(MSF_symptom_tiredness=case_when(patcourse_asymp=="Yes" & is.na(MSF_symptom_tiredness) ~ "No",
+                                   patcourse_asymp=="Yes" & MSF_symptom_tiredness=="Unknown" ~ "No",
+                                   TRUE ~ MSF_symptom_tiredness)) %>% 
+mutate(MSF_symptom_aches=case_when(patcourse_asymp=="Yes" & is.na(MSF_symptom_aches) ~ "No",
+                                   patcourse_asymp=="Yes" & MSF_symptom_aches=="Unknown" ~ "No",
+                                   TRUE ~ MSF_symptom_aches)) %>% 
+mutate(MSF_symptom_nose_congestion=case_when(patcourse_asymp=="Yes" & is.na(MSF_symptom_nose_congestion) ~ "No",
+                                   patcourse_asymp=="Yes" & MSF_symptom_nose_congestion=="Unknown" ~ "No",
+                                   TRUE ~ MSF_symptom_nose_congestion)) %>% 
+mutate(MSF_symptom_runny_nose=case_when(patcourse_asymp=="Yes" & is.na(MSF_symptom_runny_nose) ~ "No",
+                                   patcourse_asymp=="Yes" & MSF_symptom_runny_nose=="Unknown" ~ "No",
+                                   TRUE ~ MSF_symptom_runny_nose)) %>% 
+mutate(MSF_symptom_diarrhoea=case_when(patcourse_asymp=="Yes" & is.na(MSF_symptom_diarrhoea) ~ "No",
+                                   patcourse_asymp=="Yes" & MSF_symptom_diarrhoea=="Unknown" ~ "No",
+                                   TRUE ~ MSF_symptom_diarrhoea)) %>% 
+mutate(MSF_symptom_vomiting=case_when(patcourse_asymp=="Yes" & is.na(MSF_symptom_vomiting) ~ "No",
+                                   patcourse_asymp=="Yes" & MSF_symptom_vomiting=="Unknown" ~ "No",
+                                   TRUE ~ MSF_symptom_vomiting)) %>% 
+mutate(MSF_symptom_loss_taste=case_when(patcourse_asymp=="Yes" & is.na(MSF_symptom_loss_taste) ~ "No",
+                                   patcourse_asymp=="Yes" & MSF_symptom_loss_taste=="Unknown" ~ "No",
+                                   TRUE ~ MSF_symptom_loss_taste)) %>% 
+mutate(MSF_symptom_anosmia=case_when(patcourse_asymp=="Yes" & is.na(MSF_symptom_anosmia) ~ "No",
+                                   patcourse_asymp=="Yes" & MSF_symptom_anosmia=="Unknown" ~ "No",
+                                   TRUE ~ MSF_symptom_anosmia)) %>% 
+mutate(MSF_symptom_chest_pain=case_when(patcourse_asymp=="Yes" & is.na(MSF_symptom_chest_pain) ~ "No",
+                                   patcourse_asymp=="Yes" & MSF_symptom_chest_pain=="Unknown" ~ "No",
+                                   TRUE ~ MSF_symptom_chest_pain)) %>% 
+mutate(MSF_symptom_cutaneous_signs=case_when(patcourse_asymp=="Yes" & is.na(MSF_symptom_cutaneous_signs) ~ "No",
+                                   patcourse_asymp=="Yes" & MSF_symptom_cutaneous_signs=="Unknown" ~ "No",
+                                   TRUE ~ MSF_symptom_cutaneous_signs)) %>% 
+# patient can spit==no is that means the patient can not spit. so the target level is No
+mutate(MSF_can_spit=case_when(patcourse_asymp=="Yes" & is.na(MSF_can_spit) ~ "No",
+                                   patcourse_asymp=="Yes" & MSF_can_spit=="Unknown" ~ "No",
+                                   TRUE ~ MSF_can_spit))
+```
+
+
+```{r missing values}
+## Severity Missing versus patient ventilated or oxygen or ICU yes~ mutate in to Yes
+  dta_linelist<-dta_linelist %>% 
+   mutate(MSF_severity=case_when(is.na(MSF_severity) & MSF_received_oxygen=="Yes"~"Severe",
+                                is.na(MSF_severity) & patcourse_icu=="Yes"~"Criticl",
+                                is.na(MSF_severity) & patcourse_vent=="Yes"~"Critcal",
+                                TRUE~MSF_severity))
+dta_linelist<-dta_linelist %>% 
+  mutate(MSF_severity, MSF_severity = case_when(
+  is.na(MSF_severity) & patcourse_asymp == "Yes" | outcome_patcourse_admit == "No" ~ "Mild",
+  TRUE~MSF_severity
+))
+```
+
+** Other commodities 
+
+```{r further coding of MSF_complications, MSF_otherlung diseases, ind_Comcond_other for more analysis}
+## Further analysis of ind_comcond_other, MSF_complications and Other_lung_diseases
+
+
+## Analyze the free text data in the Comcond_other to categorize
+
+
+```
+
+
+```{r data cleaning and regrouping}
+
+## exclude countries that are not needed or based on threshold 
+data_linelist<-dta_linelist %>% 
+# Include cases before the end of 2021
+  filter(date_event<=date_max_report) %>%  
+## filter only confirmed cases 
+  filter(ind_MSF_covid_status=="Confirmed") %>% 
+  filter(merge_admit=="Yes")
+```
+
+
+```{r cases per country}
+cases_country<-data_linelist %>%
+  dplyr::select(Country) %>%
+  tbl_summary(statistic=all_categorical()~c("({n}/{N}),({p}%)")) %>%
+  modify_caption("Number of confirmed and admitted cases by country between January 2020-December 2021")
+theme_gtsummary_compact()
+theme_gtsummary_journal()
+
+#cases_country %>%  
+#as_flex_table() %>% 
+#set_table_properties(width = 1, layout = "autofit") %>%  ## this will give immediate word print instead of knitting and table can be copy and pasted
+  #print(preview = "docx")
+```
+
+
+```{r claean data}
+
+## categorize  data Age 
+data_linelist<-data_linelist %>% 
+
+## age group for Continent wise analysis based on MSF Analysis plan
+mutate(`Age group`=case_when(
+# criteria # new vlue (WHO)
+age_in_years<2 ~"0-1 yrs",
+age_in_years>=2 & age_in_years <5  ~"2-4 yrs",
+age_in_years>=5 & age_in_years <15 ~"5-14 yrs",
+age_in_years>=15 & age_in_years<30 ~"15-29 yrs",
+age_in_years>=30 & age_in_years<40 ~"30-39 yrs",
+age_in_years>=40 & age_in_years<50 ~"40-49 yrs",
+age_in_years>=50 & age_in_years<60 ~"50-59 yrs",
+age_in_years>=60 & age_in_years<70 ~"60-69 yrs",
+age_in_years>=70 & age_in_years<80 ~"70-79 yrs",
+age_in_years>=80 ~ "80+ yrs",
+is.na(age_in_years) ~ NA_character_)) %>%
+mutate(`Age group`=factor(`Age group`,
+                             levels=c("0-1 yrs",
+                                      "2-4 yrs",
+                                      "5-14 yrs",
+                                      "15-29 yrs",
+                                      "30-39 yrs",
+                                      "40-49 yrs",
+                                      "50-59 yrs",
+                                      "60-69 yrs",
+                                      "70-79 yrs",
+                                      "80+ yrs", 
+                                      NA_character_))) %>% 
+## regroup the age group according to the data in mainland china (Literature)
+  mutate(`Age china`=case_when(
+# criteria # new vlue
+age_in_years<10 ~"0-9 yrs",
+age_in_years>=10 & age_in_years <20  ~"10-19 yrs",
+age_in_years>=20 & age_in_years <30 ~"20-29 yrs",
+age_in_years>=30 & age_in_years<40 ~"30-39 yrs",
+age_in_years>=40 & age_in_years<49 ~"40-49 yrs",
+age_in_years>=50 & age_in_years<59 ~"50-59 yrs",
+age_in_years>=60 & age_in_years<69 ~"60-69 yrs",
+age_in_years>=70 & age_in_years<79 ~"70-79 yrs",
+age_in_years>=80 ~ "80+ yrs",
+is.na(age_in_years) ~ NA_character_)) %>%
+mutate(`Age group`=factor(`Age group`,
+                             levels=c("0-9 yrs",
+                                      "10-19 yrs",
+                                      "20-29yrs",
+                                      "30-39 yrs",
+                                      "40-49 yrs",
+                                      "50-59 yrs",
+                                      "60-69 yrs",
+                                      "70-79 yrs",
+                                      "80+ yrs", 
+                                      NA_character_))) %>% 
+  
+## Mutate age based on the COVID cases in the UK (Literature)  
+mutate(`Age 7gp`=case_when(
+# criteria # new value
+age_in_years<18 ~"0-17 yrs",
+age_in_years>=18 & age_in_years<30 ~"18-29 yrs",
+age_in_years>=30 & age_in_years<40 ~"30-39 yrs",
+age_in_years>=40 & age_in_years<49 ~"40-49 yrs",
+age_in_years>=50 & age_in_years<59 ~"50-59 yrs",
+age_in_years>=60 & age_in_years<69 ~"60-69 yrs",
+age_in_years>=70 & age_in_years<79 ~"70-79 yrs",
+age_in_years>=80 ~ "80+ yrs",
+is.na(age_in_years) ~ NA_character_)) %>%
+mutate(`Age 7gp`=factor(`Age 7gp`,
+                             levels=c("0-17 yrs",
+                                      "18-29 yrs",
+                                      "30-39 yrs",
+                                      "40-49 yrs",
+                                      "50-59 yrs",
+                                      "60-69 yrs",
+                                      "70-79 yrs",
+                                      "80+ yrs", 
+                                      NA_character_))) %>% 
+## sex data clean
+mutate(sex = factor(patinfo_sex, levels = c('F', 'M'), 
+                    labels = c('Female', 'Male')))
+```
+
+
+```{r clean hospital treatment data}
+data_linelist<-data_linelist %>% 
+## categorize the duration of illness for confirmed cases 
+mutate(`Length of stay in Hospital`=
+          case_when(
+    # criteria                                   # new value if TRUE
+    MSF_length_stay< 3                                   ~ "<3 days",
+    MSF_length_stay >= 3 & MSF_length_stay < 6           ~ "3-6 days",
+    MSF_length_stay >= 7 & MSF_length_stay < 13          ~ "7-13 days",
+    MSF_length_stay>=14                                  ~"14+ days",
+    is.na(MSF_length_stay)                               ~ NA_character_,
+    )) %>% 
+  
+  mutate(`Length of stay in Hospital`=factor(`Length of stay in Hospital`,
+                                             levels = c("<3 days",
+                                                        "3-6 days",
+                                                        "7-13 days",
+                                                        "14+ days",
+                                                         NA_character_))) %>% 
+#### Age category for pregnanct analysis
+mutate(`Age preg`=case_when(
+## criteria # new value
+age_in_years<19 ~"0-19 years",
+age_in_years>=20 & age_in_years <30  ~"20-29 years",
+age_in_years>=30 & age_in_years <40 ~"30-39 years",
+age_in_years>=40 & age_in_years <49 ~"40-49 years",
+age_in_years>=50 ~ "80+ yrs",
+is.na(MSF_length_stay) ~ NA_character_)) %>%
+mutate(`Age preg`=factor(`Age preg`,
+                             levels=c("0-19 years",
+                                      "20-29 years",
+                                      "30-39 years",
+                                      "40-49 years",
+                                      ">=50 years", 
+                                      NA_character_))) %>% 
+
+## categorize the delay between admission and date of consultation
+  mutate(`Delay between onset and consultation` = as.numeric(MSF_date_consultation - patcourse_dateonset)) %>% 
+  mutate(`Delay between onset and consultation` = case_when(
+    # criteria                                   # new value if TRUE
+   `Delay between onset and consultation` <3                                                ~ "<3 days",
+   `Delay between onset and consultation` >=3 & `Delay between onset and consultation` < 6  ~ "3-6 days",
+   `Delay between onset and consultation` >=7 & `Delay between onset and consultation` < 13 ~ "7-13 days",
+   `Delay between onset and consultation`>=14                                                ~"14+ days",
+   is.na(`Delay between onset and consultation`)                                             ~ NA_character_
+    )) %>%
+     mutate(`Delay between onset and consultation`=factor(`Delay between onset and consultation`,
+                                             levels = c("<3 days",
+                                                        "3-6 days",
+                                                        "7-13 days",
+                                                        "14+ days",
+                                                         NA_character_))) %>% 
+## Mutate MSF admission
+  mutate(Admitted=merge_admit,
+         `Oxygen therapy`=merge_oxygen,
+         `Ventilation therapy`=merge_vent,
+         `ICU admitted`=merge_icu,
+          Outcome=outcome_patcourse_status) %>% 
+  
+   mutate(Admitted=factor(Admitted,
+                    levels = c("Yes",
+                               "No",
+                               "Unknown",
+                               NA_character_))) %>% 
+    mutate(`Oxygen therapy`=factor(`Oxygen therapy`,
+                    levels = c("No at any time",
+                               "No at admission then not reported",
+                               "Yes",
+                               "Not reported",
+                               NA_character_))) %>% 
+    mutate(`Ventilation therapy`=factor(`Ventilation therapy`,
+                    levels = c("No at any time",
+                               "No at admission then not reported",
+                               "Yes",
+                               "Not reported",
+                                NA_character_))) 
+
+```
+
+
+```{r clean signs and symptoms}
+
+data_linelist<-data_linelist %>% 
+## Mutate MSF symptoms
+ mutate(  Fever              = MSF_symptom_fever, 
+         `Abdominal pain`    = MSF_symptom_abdominal_pain,
+          Aches              = MSF_symptom_aches,
+          Ansomia            = MSF_symptom_anosmia,
+          Breathlessness     = MSF_symptom_breathlessness,
+         `Chest pain`        = MSF_symptom_chest_pain, 
+          Chills             = MSF_symptom_chills,
+          Cough              = MSF_symptom_cough,
+         `Cutaneous signs`   = MSF_symptom_cutaneous_signs, 
+         `Diarrhoea`         = MSF_symptom_diarrhoea,
+         `Headache`          = MSF_symptom_headache,
+         `Loss of taste`     = MSF_symptom_loss_taste,
+         `Nasal congestion`  = MSF_symptom_nose_congestion,
+         `Runny nose`        = MSF_symptom_runny_nose, 
+         `Sore throat`      = MSF_symptom_sorethoat,
+          Vomiting           = MSF_symptom_vomiting,
+          Tiredness          = MSF_symptom_tiredness,
+          `Can spit`         = MSF_can_spit
+        ) %>% 
+
+## Recode the levels to for the regression to keep them in order 
+## Discussion meed if the Unknown values for the signs and symptoms should be labels as NAs or be treated as "Unknown"  
+mutate(Fever=factor(Fever,
+                    levels = c("No",
+                               "Yes",
+                               "Unknown",
+                                 NA_character_))) %>% 
+mutate(`Abdominal pain`=factor(`Abdominal pain`,
+                    levels = c("No",
+                               "Yes",
+                               "Unknown",
+                               NA_character_))) %>%
+  
+mutate(Aches=factor(Aches,
+                    levels = c("No",
+                               "Yes",
+                               "Unknown",
+                               NA_character_))) %>%
+mutate(Ansomia=factor(Ansomia,
+                    levels = c("No",
+                               "Yes",
+                               "Unknown",
+                               NA_character_))) %>% 
+mutate(Breathlessness=factor(Breathlessness,
+                    levels = c("No",
+                               "Yes",
+                               "Unknown",
+                               NA_character_))) %>% 
+mutate(`Chest pain`=factor(`Chest pain`,
+                    levels = c("No",
+                               "Yes",
+                               "Unknown"))) %>% 
+mutate(Chills=factor(Chills,
+                    levels = c("No",
+                               "Yes",
+                               "Unknown",
+                               NA_character_))) %>% 
+mutate(Cough=factor(Cough,
+                    levels = c("No",
+                               "Yes",
+                               "Unknown",
+                               NA_character_))) %>% 
+mutate(`Cutaneous signs`=factor(`Cutaneous signs`,
+                    levels = c("No",
+                               "Yes",
+                               "Unknown"))) %>% 
+mutate(Diarrhoea=factor(Diarrhoea,
+                    levels = c("No",
+                               "Yes",
+                               "Unknown",
+                               NA_character_))) %>% 
+mutate(Headache=factor(Headache,
+                    levels = c("No",
+                               "Yes",
+                               "Unknown",
+                               NA_character_))) %>% 
+mutate(`Loss of taste`=factor(`Loss of taste`,
+                    levels = c("No",
+                               "Yes",
+                               "Unknown",
+                               NA_character_))) %>% 
+mutate(`Nasal congestion`=factor(`Nasal congestion`,
+                    levels = c("No",
+                               "Yes",
+                               "Unknown",
+                               NA_character_))) %>% 
+                               
+mutate(`Runny nose`=factor(`Runny nose`,
+                    levels = c("No",
+                               "Yes",
+                               "Unknown"))) %>% 
+mutate(Vomiting=factor(Vomiting,
+                    levels = c("No",
+                               "Yes",
+                               "Unknown",
+                               NA_character_))) %>% 
+
+  mutate(Tiredness=factor(Tiredness,
+                    levels = c("No",
+                               "Yes",
+                               "Unknown"))) %>% 
+  
+  mutate(`Can spit`=factor(`Can spit`,
+                    levels = c("Yes",
+                               "No",
+                               "Unknown",
+                                NA_character_))) %>% 
+  mutate(`Sore throat`=factor(`Sore throat`,
+                    levels = c("Yes",
+                               "No",
+                               "Unknown",
+                                NA_character_))) %>% 
+  mutate(`Can spit`=factor(`Can spit`, ## No should come first as the response of interest is NO
+                    levels = c("No",
+                               "Yes",
+                               "Unknown",
+                                NA_character_)))
+
+```
+
+
+```{r data clean co-morbidities}
+
+data_linelist<-data_linelist %>% 
+## mutate Co morbid conditions
+  mutate(`Cardiac diseases`            =ind_Comcond_cardi,
+           Hypertension                =ind_MSF_hypertension,
+          `Liver diseases`             =ind_Comcond_liver,
+          `Renal diseases`             =ind_Comcond_renal,
+           Diabetes                    =ind_Comcond_diabetes,
+          `Neurological diseases`      =ind_Comcond_neuro,
+           Malignancy                  =ind_Comcond_malig,
+           Malaria                     =MSF_malaria,
+           HIV                         =ind_MSF_hiv_status,
+          `Other immune deficiency diseases`   =ind_Comcond_immuno,
+           Tuberculosis                         =ind_MSF_tb_active,
+          `Other chronic lung diseases`        =ind_Comcond_lung,
+           Measles                             =ind_MSF_measles,
+           Pregnancy                           =ind_Comcond_preg,
+           Trimester                           =ind_Comcond_pregt,
+          `Post partum`                       =ind_Comcond_partum) %>% 
+  mutate(`Cardiac diseases`=factor(`Cardiac diseases`,
+                    levels = c("No",
+                               "Yes",
+                               "Unknown",
+                               NA_character_))) %>% 
+  mutate(Hypertension=factor(Hypertension,
+                    levels = c("No",
+                               "Yes",
+                               "Unknown",
+                               NA_character_))) %>% 
+  mutate(`Liver diseases`=factor(`Liver diseases`,
+                    levels = c("No",
+                               "Yes",
+                               "Unknown",
+                               NA_character_))) %>% 
+  mutate(`Renal diseases`=factor(`Renal diseases`,
+                    levels = c("No",
+                               "Yes",
+                               "Unknown",
+                               NA_character_))) %>% 
+  mutate(`Neurological diseases`=factor(`Neurological diseases`,
+                    levels = c("No",
+                               "Yes",
+                               "Unknown",
+                               NA_character_))) %>% 
+  mutate(Diabetes=factor(Diabetes,
+                    levels = c("No",
+                               "Yes",
+                               "Unknown",
+                                NA_character_))) %>% 
+  
+  mutate(Malignancy=factor(Malignancy,
+                    levels = c("No",
+                               "Yes",
+                               "Unknown",
+                               NA_character_))) %>% 
+  mutate(Malaria=factor(Malaria,
+                    levels = c("Negative",
+                               "Inconclusive",
+                               "Positive",
+                               "Not done",
+                               NA_character_))) %>% 
+  mutate(HIV=factor(HIV,
+                    levels = c("Negative",
+                               "Positive (no ARV)",
+                               "Positive (on ARV)",
+                               "Positive (unknown)",
+                               "Unknown",
+                               NA_character_))) %>% 
+  mutate(Measles=factor(Measles,
+                    levels = c("No",
+                               "Yes",
+                               "Unknown",
+                               NA_character_))) %>% 
+   mutate(Tuberculosis=factor(Tuberculosis,
+                    levels = c("No",
+                               "Yes (currently on treatment)",
+                               "Yes (currently no treatment)",
+                               "Yes (unknown)",
+                               "Unknown",
+                               NA_character_))) %>% 
+  mutate(Pregnancy=factor(Pregnancy,
+                    levels = c("No",
+                               "Yes",
+                               "Unknown",
+                               NA_character_))) %>% 
+  mutate(`Other chronic lung diseases`=factor(`Other chronic lung diseases`,
+                    levels = c("No",
+                               "Yes",
+                               "Unknown",
+                               NA_character_))) %>%
+  mutate(`Other immune deficiency diseases`=factor(`Other immune deficiency diseases`,
+                    levels = c("No",
+                               "Yes",
+                               "Unknown",
+                               NA_character_))) 
+
+```
+
+
+```{r data clean other risk factors}
+
+data_linelist<-data_linelist %>% 
+## other risk factors 
+      mutate(Obesity                          =MSF_obesity,
+             Smoking                         =ind_MSF_smoking,
+             Malnutrition                    =ind_MSF_malnutrition,
+            `Health care worker`             =MSF_job,
+            `Travel in the past 14 days`     =expo_travel,
+            `Visited health care facility`   =expo_visit_healthcare,
+            `Visited traditional healer`      =MSF_expo_traditional_healer,
+            `Participated in mass gathering`  =MSF_expo_mass_gathering,
+            `Contact setting`=expo_case_setting_detail,
+            `Contact to case`=expo_contact_case) %>% 
+  mutate(Obesity=factor(Obesity,
+                    levels = c("No",
+                               "Yes",
+                               "Unknown",
+                               NA_character_))) %>% 
+  mutate(Smoking=factor(Smoking,
+                    levels = c("No",
+                               "Yes (current)",
+                               "Yes (former)",
+                               "Unknown",
+                               NA_character_))) %>%
+  mutate(Malnutrition=factor(Malnutrition,
+                    levels = c("No",
+                               "Yes",
+                               "Unknown",
+                                NA_character_))) %>%
+  mutate(`Travel in the past 14 days`=factor(`Travel in the past 14 days`,
+                    levels = c("No",
+                               "Yes",
+                               "Unknown",
+                               NA_character_))) %>% 
+  mutate(`Visited health care facility`=factor(`Visited health care facility`,
+                    levels = c("No",
+                               "Yes",
+                               "Unknown",
+                               NA_character_))) %>% 
+  mutate(`Visited traditional healer`=factor(`Visited traditional healer`,
+                    levels = c("No",
+                               "Yes",
+                               "Unknown",
+                               NA_character_))) %>% 
+  mutate(`Participated in mass gathering`=factor(`Participated in mass gathering`,
+                    levels = c("No",
+                               "Yes",
+                               "Unknown",
+                               NA_character_))) %>% 
+  mutate(`Contact to case`=factor(`Contact to case`,
+                    levels = c("No",
+                               "Yes",
+                               "Unknown",
+                             NA_character_))) %>% 
+ mutate(pregnancy=case_when(sex=="Male" & `ind_Comcond_preg`=="No" ~"Male",
+                           sex=="Male" & `ind_Comcond_preg`=="Yes" ~"Invalid",
+                           sex=="Male" & `ind_Comcond_preg`== ""   ~"Male",
+                           sex=="Male" & `ind_Comcond_preg`=="No" ~"Male",
+                           sex=="Femal" & `ind_Comcond_preg`=="No" ~"Not pregnant",
+                           sex=="Female" &`ind_Comcond_preg`=="Yes" ~"Pregnant",
+                           is.na(sex)~NA_character_,
+                           sex=="Female" & is.na(`ind_Comcond_preg`) ~NA_character_,
+                           TRUE ~ `ind_Comcond_preg`
+                          ))%>%
+  ## Mutate the severity in to (Mild, Severe and Dead)
+  mutate(Severity=case_when(MSF_severity=="Moderate" & outcome_patcourse_status=="Sent back home"~ "Mild",
+                            MSF_severity=="Moderate" & outcome_patcourse_status=="Transferred"~ "Severe",
+                            MSF_severity=="Moderate" & outcome_patcourse_status=="Cured"~ "Severe",
+                            MSF_severity=="Moderate" & outcome_patcourse_status=="Dead"~ "Severe",
+                            MSF_severity=="Moderate" & outcome_patcourse_status=="Left against medical advice"~ "Severe",
+                            MSF_severity=="Moderate" & outcome_patcourse_status==""~ NA_character_,
+                            MSF_severity=="Moderate" & outcome_patcourse_status=="Other"~ "Mild",
+                            
+                            MSF_severity=="Critical" & outcome_patcourse_status=="Cured"~ "Severe",
+                            MSF_severity=="Critical" & outcome_patcourse_status=="Left against medical advice"~ "Severe",
+                            MSF_severity=="Critical" & outcome_patcourse_status=="Dead"~ "Dead",
+                            MSF_severity=="Critical" & outcome_patcourse_status=="Left against medical advice"~ "Severe",
+                            MSF_severity=="Critical"&  outcome_patcourse_status=="Other"~"Severe",
+                            
+                            MSF_severity=="Severe" & outcome_patcourse_status=="Cured"~ "Severe",
+                            MSF_severity=="Severe" & outcome_patcourse_status=="Died"~ "Dead",
+                            MSF_severity=="Severe" & outcome_patcourse_status=="Left against medical advice"~ "Severe",
+                            MSF_severity=="Severe" & outcome_patcourse_status=="Sent back home"~ "Severe",
+                            MSF_severity=="Severe" & outcome_patcourse_status=="Transferred"~ "Severe",
+                            
+                            MSF_severity=="Mild" & outcome_patcourse_status=="Left against medical advice"~ "Mild",
+                            MSF_severity=="Mild" & outcome_patcourse_status=="Other"~ "Mild",
+                            MSF_severity=="Mild" & outcome_patcourse_status=="Sent back home"~ "Mild",
+                            MSF_severity=="Mild" & outcome_patcourse_status=="Dead"~ "Dead",
+                            MSF_severity=="Mild" & outcome_patcourse_status=="Transfered"~ "Mild",
+                            MSF_severity=="Mild" & outcome_patcourse_status=="Others"~ "Mild",
+                            
+                            
+                            is.na(MSF_severity) & outcome_patcourse_status=="Cured"~ "Severe",
+                            is.na(MSF_severity) & outcome_patcourse_status=="Transferred"~ "Severe",
+                            is.na(MSF_severity) & outcome_patcourse_status=="Left against medical advice"~ "Severe",
+                            is.na(MSF_severity) & outcome_patcourse_status=="Transferred"~ "Severe",
+                            is.na(MSF_severity) & outcome_patcourse_status=="Dead"~ "Dead",
+                            is.na(MSF_severity) & outcome_patcourse_status=="Sent back home"~ "Mild")) %>% 
+mutate(Severity=factor(Severity,
+                       level=c("Mild",
+                               "Severe",
+                               "Dead",
+                               NA_character_))) %>% 
+
+mutate(Occupation=case_when(MSF_job=="Health workers: 1st line (patient contact)"      ~"1st line healthcare worker",
+                           MSF_job=="Health workers: 2nd line (no patient contact)"    ~"2nd line healthcare worker",
+                           MSF_job=="Laboratory technician"                            ~"2nd line healthcare worker",
+                           MSF_job=="Student-University Institute"                     ~"Student/Teacher",
+                           MSF_job=="Teacher"                                          ~"Student/Teacher",
+                           MSF_job=="Prisoner - Detained"                              ~"Prisoner",
+                           MSF_job=="Community Worker"                                 ~"Community Worker" ,
+                           MSF_job=="Riposte Agent: community worker"                  ~"Community Worker or miscellaneous" ,
+                           MSF_job=="Riposte Agent: other"                             ~"Community Worker  or miscellaneous" ,
+                           MSF_job=="Traditional healer"                               ~"Community Worker  or miscellaneous" ,
+                           MSF_job=="Social worker"                                    ~"Community Worker  or miscellaneous" ,
+                           MSF_job=="Retired person"                                   ~"Retired" ,
+                           MSF_job=="Religious"                                        ~"Community Worker or miscellaneous" ,
+                           MSF_job=="Seniour executive"                                ~"Seniour official" ,
+                           MSF_job=="State official"                                   ~"Seniour official" ,
+                           MSF_job=="Employed (Other)"                                 ~"Employed other" ,
+                           MSF_job=="Unemployed-no occupation"                         ~"Unemployed" ,
+                           MSF_job=="Trader-Merchant and employees"                     ~"Trader-Merchant and employees",
+                           is.na(MSF_job)~NA_character_,
+                           TRUE ~"Others")) %>% 
+  mutate(Occupation=factor(Occupation,
+                           level= c("Others",
+                                  "Student/Teacher",
+                                  "1st line healthcare worker",
+                                  "2nd line healthcare worker",
+                                  "Prisoner",
+                                  "Community Worker  or miscellaneous" ,
+                                  "Trader-Merchant and employees",
+                                  "Seniour official" ,
+                                  "Employed other" ,
+                                  "Unemployed" ,
+                                  "Retired" ,
+                                  NA_character_
+  ))) 
+
+#data_linelist<-data_linelist %>% 
+  #mutate(Pregnancy=case_when(pregnancy=="Pregnant"~"Yes",
+                             #pregnancy=="No"~"No",
+                             #TRUE~NA_character_)) %>% 
+   #mutate(Pregnancy=factor(Pregnancy,
+                    #levels = c("No",
+                               #"Yes",
+                               #NA_character_)))
+
+```
+
+<!-----tbls for in line code--------->
+
+```{r discriptive tables for inline text}
+#Assign table number and figure number here to insert them in to the inline text 
+
+# table only confirmed cases by country
+Cases_country<-data_linelist %>% dplyr::select(Country) %>% tbl_summary(statistic = all_categorical()~c("({n}/{N})({p}%)"))
+#Cases_country
+
+# cases by region:
+cases_region<-data_linelist %>% dplyr::select(Continent) %>% tbl_summary(statistic = all_categorical()~c("{n}({p}%)"))
+#cases_region
+
+# sex of patienst
+gender_of_patients<-data_linelist %>% dplyr::select(sex) %>% tbl_summary(statistic = all_categorical()~c("{n}({p}%)"))
+#gender_of_patients
+
+median_age<-data_linelist %>% dplyr::select (age_in_years) %>% tbl_summary(statistic = (all_continuous()~c("{median}[{p25}-{p75}]")),missing="no")
+#median_age
+
+median_age_sex<-data_linelist %>%  dplyr::select (age_in_years,sex) %>% tbl_summary(by=sex,statistic = (all_continuous()~c("{median}[{p25}-{p75}]")))
+#median_age_sex
+
+## Signs and symptoms ()
+signssymptoms<-data_linelist %>% 
+  dplyr::select(Fever, `Abdominal pain`, Aches,  Ansomia,`Breathlessness`,`Chest pain`, `Chest pain`,  Chills,  Cough,  `Cutaneous signs`, `Diarrhoea`,  `Headache`,  `Loss of taste`, `Nasal congestion`,  `Runny nose`,  `Sore throat`,Vomiting,  Tiredness) %>% 
+  tbl_summary(
+    statistic = all_categorical()~c("{n}({p}%)"))
+#signssymptoms
+
+##Commorbdities ()
+comorb<-data_linelist %>% 
+  dplyr::select(`Cardiac diseases`, Hypertension, `Liver diseases`, `Renal diseases`, Diabetes, `Neurological diseases`, Malignancy, Malaria, HIV, `Other immune deficiency diseases`,Tuberculosis,`Other chronic lung diseases`,Measles) %>%
+  tbl_summary(statistic = all_categorical()~c("{n}({p}%)"))
+#comorb
+
+## Additional factors ()
+riskfactors<-data_linelist %>% 
+  dplyr::select(Obesity,Smoking, Malnutrition,Occupation, `Travel in the past 14 days`,`Visited health care facility`, `Visited traditional healer`,`Participated in mass gathering`,`Contact setting`, `Contact to case`) %>% tbl_summary(statistic = all_categorical()~c("{n}({p}%)"))
+#riskfactors
+
+## average delay for consultation 
+length_stay<-data_linelist %>% dplyr::select (MSF_length_stay) %>% tbl_summary(statistic = (all_continuous()~c("{mean}({sd})")))
+#length_stay
+
+## average length of sty in hospital
+length_delay<-data_linelist %>% 
+  mutate(delay = as.numeric(MSF_date_consultation - patcourse_dateonset)) %>% 
+  dplyr::select (delay) %>% tbl_summary(statistic = (all_continuous()~c("{mean}({sd})")))
+#length_delay
+
+##treatmet and outcome ()
+treatoutcome<-data_linelist %>% 
+  dplyr::select( `Delay between onset and consultation`,`Length of stay in Hospital`,`ICU admitted`,`Ventilation therapy`,`Oxygen therapy`,Outcome) %>% tbl_summary(statistic = all_categorical()~c("{n}({p}%)"))
+#treatoutcome
+
+##Diseases severity
+severity<-data_linelist %>% dplyr::select(MSF_severity) %>% tbl_summary(statistic = all_categorical()~c("{n}({p}%)"))
+#severity
+```
+
+# Admitted COVID-19 patients
+## Socio-demographic  Characteristics
+
+In this analysis, we have included only admitted patients from all missions where MSF has been supporting the COVID -19 centers either alone or in collaboration with the government facilities or other actors. Out of 41 countries where MSF has supported the COVID-19 pandemic control Data form 34 countries (Table 1)is included in this study. Most of the cases were from Syria `r inline_text(Cases_country,variable='Country',level='Syria', column='stat_0')`, Yemen `r inline_text(Cases_country,variable='Country',level='Yemen')` and Iraq `r inline_text(Cases_country,variable='Country',level='Iraq')`. According to the world bank region classification most of the patients included in this analysis come from middle east and north Africa `r inline_text(cases_region,variable='Continent', level='Middle East & North Africa',column='stat_0')` cases followed by Sub Saharan Africa `r inline_text(cases_region,variable='Continent', level='Sub Saharan Africa',column='stat_0')`. Patients included from Europe and central Asia accounts only for 2%. 
+
+```{r tables median age of cases per country analysis}
+#cases gender
+Sex_of_patients<-data_linelist %>% 
+  select(sex) %>% 
+  tbl_summary()
+
+## Median age by continent male
+median_age_continent_male<-data_linelist %>%  
+filter(sex=="Male") %>% 
+ dplyr::select (Continent,age_in_years) %>% 
+  tbl_summary(label= age_in_years~"Male age",missing='no',by=Continent,statistic = all_continuous()~c("{median}[{p25}-{p75}]")) 
+  
+
+## Median age by continent Female 
+
+median_age_continent_Female<-data_linelist %>%  
+filter(sex=="Female") %>% 
+ dplyr::select (Continent,age_in_years) %>% tbl_summary(label= age_in_years~"Female age",missing='no',by=Continent,statistic = all_continuous()~c("{median}[{p25}-{p75}]"))  
+  
+
+# Stack the two tables 
+medain_age_sex_stack<-tbl_stack(tbls=list(median_age_continent_male,median_age_continent_Female))
+
+## median age severity---  ---
+
+median_age_severity_male<-data_linelist %>%  
+filter(sex=="Male") %>% 
+ dplyr::select (MSF_severity,age_in_years) %>% 
+  tbl_summary(label= age_in_years~"Male age",missing='no',by=MSF_severity,statistic = all_continuous()~c("{median}[{p25}-{p75}]")) 
+  
+
+## Median age by continent Female 
+
+median_age_severity_Female<-data_linelist %>%  
+filter(sex=="Female") %>% 
+ dplyr::select (MSF_severity,age_in_years) %>% tbl_summary(label= age_in_years~"Female age",missing='no',by=MSF_severity,statistic = all_continuous()~c("{median}[{p25}-{p75}]"))  
+  
+
+# Stack the two tables 
+medain_age_severity_stack<-tbl_stack(tbls=list(median_age_severity_male,median_age_severity_Female))
+ 
+ #medain_age_sex_stack 
+ #medain_age_severity_stack 
+```
+
+Number of male and female patients were `r inline_text(Sex_of_patients,variable='sex',level='Male')` and `r inline_text(Sex_of_patients,variable='sex',level='Female')` respectively.The median age of patients with inter quartile range  was `r inline_text(median_age,variable='age_in_years')` years. Median age among male with 25th and 75th percentile was `r inline_text(median_age_sex,variable='age_in_years',column='stat_1')`  and median age among female patients with 25th and 75th percentile was `r inline_text(median_age,variabl='age_in_years', column='stat_0')`.The median age of for male and female were higher in Latin america and Caribbeans `r inline_text(median_age_continent_male, variable='age_in_years',column='stat_2')` years for males and `r inline_text(median_age_continent_Female, variable='age_in_years',column='stat_2')` for females.     
+
+```{r age group versus socio demographics}
+
+Age_groupsocio<-data_linelist %>% 
+   mutate(`Age 7gp`=fct_explicit_na(`Age 7gp`)) %>% 
+  dplyr::select(`Age 7gp`,sex, Continent)
+ 
+
+table2<-Age_groupsocio %>% 
+ tbl_summary(by=`Age 7gp`,
+            missing = "no") %>% 
+            #statistic=all_categorical()~c("({n}/{N}),({p}%)")) %>% 
+            #percent='row')  
+  bold_labels() %>% 
+  add_n() %>% 
+  add_overall(last=T) %>% 
+  modify_header(label ~ "**Variables**") %>%
+  modify_caption("Sex and geographic region of confirmed COVID-19 cases stratified by age categories")  
+theme_gtsummary_compact()
+theme_gtsummary_journal(journal = "jama",set_theme =TRUE) 
+
+#Manually moving the columns (eg below)
+#table2<-table2 %>%
+  #modify_table_body(~.x %>% dplyr::relocate(p.value, .after = label))
+
+#table2 %>%  as_flex_table() %>% 
+#set_table_properties(width = 1, layout = "autofit") %>%  ## this will give immediate word print instead of knitting and table can be copy and pasted
+  #print(preview = "docx")
+
+```
+
+
+```{r table  2}
+table2
+#table2 %>%  as_flex_table() %>% 
+#set_table_properties(width = 1, layout = "autofit") %>%  ## this will give immediate word print instead of knitting and table can be copy and pasted
+  #print(preview = "docx")
+```
+
+Admission rate among male patients were higher in age group of 35-49 years old `r inline_text(table2,variable='sex',level='Male',column='stat_4')` while the admission rate for female patients were regular across all age groups. In  Europe and central Asia most patents were were aged 15-34 years `r inline_text(table2,variable='Continent',level='Europe & Central Asia',column='stat_3')`,in Middle east and North Africa 50-64 years old `r inline_text(table2,variable='Continent',level='Europe & Central Asia',column='stat_3')`, 35-49 years old in South Asia `r inline_text(table2,variable='Continent',level='Middle East & North Africa',column='stat_5')`,50-64 years old in Latin America & Caribbean `r inline_text(table2,variable='Continent',level='Latin America & Caribbean',column='stat_3')`,  15-34 years old in in Sub Saharan Africa `r inline_text(table2,variable='Continent',level='Sub Saharan Africa',column='stat_5')`, and 60-69 yeard old  `r inline_text(table2,variable='Continent',level='South Asia',column='stat_7')` in South Asia(Table 2) 
+
+<!-- Age/sex pyramid by Continent -->
+
+```{r pyramid-age-sex-confirmed-Continent, fig.cap = 'Age pyramid of confirmed admitted COVID-19 patinets in MSF supported COVID-19 health service by Continent', fig.width = 6, fig.height = 6}
+# Done by Paul
+
+missing_age_sex <- data_linelist %>% summarise(age = sum(is.na(age_in_years)), sex = sum(is.na(patinfo_sex)))
+
+tbl_pyramid_confirmed_Continent <- data_linelist %>% 
+  drop_na(sex, age_in_years) %>% 
+  dplyr::count(Continent, sex, `Age 7gp`) %>% 
+  mutate(n = if_else(sex == "Male", -n, n))
+
+figure1 <- ggplot(tbl_pyramid_confirmed_Continent, aes(x = `Age 7gp`, y = n, fill = sex)) +
+  facet_wrap(~Continent, ncol = 2, scales = "free_x") +
+  geom_col() +
+  geom_hline(yintercept = 0, colour = "black") +
+  geom_text(aes(label = abs(n), hjust = if_else(n >= 0, 1.1, -0.1)), colour = "white", size = 2.5) +
+  coord_flip() +
+  scale_fill_manual(name = NULL, values = c("#009999", "#0000FF"), breaks = c("Male", "Female"), labels = c("Males", "Females")) +
+  scale_y_continuous(label = abs, limits = pyramid_limits) + 
+  theme(legend.position = "bottom") +
+  labs(x = "Age group",size=6, y = "Confirmed and admitted Patients", caption = glue::glue("Missing Data: Age {missing_age_sex$age}, Sex {missing_age_sex$sex}"))+ 
+  theme(axis.text = element_text(size = 8))+
+  theme(axis.title = element_text(size = 10))
+  
+
+figure1
+
+## tabulate the sex ratio
+sex_table<-data_linelist %>% 
+  dplyr::select(`Age 7gp`, Continent,sex) %>% 
+  tbl_summary(by=sex) %>% 
+  add_p()
+
+```
+
+The Mean and median age of female patients admitted were 47.1 and 48 years respectively, While the mean and the median age of male admitted patients were 48.2 and 48 years old. The smallest median age was in Europe and Central Asia (ECA) region, 34 years among the Female and 43 years among the male patients while the oldest median age were from the Latin America and the Caribbeans (LAC) which was 60 years among the female patients and 56 years among the male patients.
+the male to female ratio was highest in the ECA region which was 4.4 followed by South Asia (SA) 2.0. the difference between the male and female patients in the ECA region was uniform across all age groups while the difference between male and female patients in south Asia was higher in the age group of 30-39 years old (l45/30).  the over all male to female ratio was 1.4, while the minimum male to female ratio of patients was 1.3 from the Middle East and North Africa (MENA) (Figure 1).
+
+
+
+## Signs and symptoms 
+
+```{r Age group verus signs and symptoms}
+
+Symptoms<-c("Fever","Cough", "Sore throat","Breathlessness","Tiredness","Abdominal pain", "Aches",  "Ansomia","Chest pain", "Chest pain",  "Chills" , "Cutaneous signs", "Diarrhoea",  "Headache",  "Loss of taste", "Nasal congestion",  "Runny nose",  "Vomiting","Can spit")
+
+Age_group_signssymptoms<-data_linelist %>% 
+  dplyr::select(`Age 7gp`, Fever,Cough, `Sore throat`, Breathlessness,Tiredness,`Abdominal pain`, Aches,  Ansomia,`Chest pain`, `Chest pain`,  Chills,    `Cutaneous signs`, `Diarrhoea`,  `Headache`,  `Loss of taste`, `Nasal congestion`,  `Runny nose`,  Vomiting,`Can spit` ) 
+
+table3<-Age_group_signssymptoms %>% 
+ tbl_summary(by=`Age 7gp`,
+             missing = "no",
+             #statistic=all_categorical()~c("({n}/{N}),({p}%)"),
+             value = list(Fever~"Yes",Cough~"Yes",`Sore throat`~"Yes",Breathlessness~"Yes",
+                          Tiredness~"Yes",`Abdominal pain`~"Yes",
+                          Aches~"Yes",Ansomia~"Yes",`Chest pain`~"Yes",Chills~"Yes",
+                          `Cutaneous signs`~"Yes",`Diarrhoea`~"Yes", 
+                         `Diarrhoea`~"Yes", `Headache`~"Yes", 
+                         `Loss of taste`~"Yes",`Nasal congestion`~"Yes", `Runny nose`~"Yes", 
+                          Vomiting~"Yes",`Can spit`~"No"), 
+             
+                      label=list(Fever~"Fever",Cough~"Cough",`Sore throat`~"Sore throat",
+                                 `Breathlessness`~"Breathlessness",
+                                  Tiredness~"Tiredness", `Abdominal pain`~"Abdominal Pain", 
+                                  Aches~"Aches", Ansomia~"Anosmia",
+                                  `Chest pain`~"Chest pain", Chills~"Chills", 
+                                  `Cutaneous signs`~"Cutaneous signs", `Diarrhoea`~"Diarrhoea", 
+                                   `Headache`~"Headache",`Loss of taste`~"Loss of taste",
+                                   `Nasal congestion`~" Nasal congestion", 
+                                  `Runny nose`~"Runny nose", Vomiting~"Vomiting",`Can spit`~"Can Spit")) %>% 
+  bold_labels() %>% 
+   add_n() %>% 
+   add_overall(last=T) %>% 
+   modify_header(label ~ "**Signs and symptoms**") %>%
+    bold_labels() %>% 
+  modify_caption("Signs and symptoms of confirmed-admitted COVID-19 cases treated in MSF supported health facilities between Jan 2020 to Dec 2021, by age categories.")
+theme_gtsummary_compact()
+theme_gtsummary_journal(journal = "jama",set_theme = TRUE)
+                      
+                     
+```
+
+Fever, cough, breathlessness and sore throat were the most commonly reported signs and symptoms where `r inline_text(signssymptoms,variable='Fever',level='Yes',column='stat_0')` cases had/reported fever, `r inline_text(signssymptoms,variable='Cough',level='Yes',column='stat_0')` of the patients had/reported cough and, `r inline_text(signssymptoms,variable='Breathlessness',level='Yes',column='stat_0')` had/reported breathlessness respectively. Cutaneous signs was the least reported, `r inline_text(signssymptoms,variable='Cutaneous signs',level='Yes',column='stat_0')`.
+ Fever was most detected/reported among patients aged 60-69 years old `r inline_text(table3,variable='Fever',column='stat_7')`, cough mostly among patients aged 70 years and above `r inline_text(table3,variable='Cough',column='stat_8')` and breathlessness among patients 60 years and older `r inline_text(table3,variable='Breathlessness',column='stat_6')`.Sore throat was most commonly reported among patients 17 years and younger `r inline_text(table3,variable='Sore throat',,column='stat_2')` (Table 3). 
+
+```{r table fever}
+table3
+#table3 %>%  as_flex_table() %>% 
+#set_table_properties(width = 1, layout = "autofit") %>%  ## this will give immediate word print instead of knitting and table can be copy and pasted
+  #print(preview = "docx")
+```
+
+
+```{r signs and symptoms by sex}
+sex_signssymptoms<-data_linelist %>% 
+  dplyr::select(sex, Fever,Cough, `Sore throat`, Breathlessness,Tiredness,`Abdominal pain`, Aches,  Ansomia,`Chest pain`, `Chest pain`,  Chills, `Cutaneous signs`, `Diarrhoea`,  `Headache`, `Loss of taste`, `Nasal congestion`,  `Runny nose`,  Vomiting,`Can spit` ) 
+
+tableq<-sex_signssymptoms %>% 
+ tbl_summary(by=sex,
+             missing = "no",
+             #statistic=all_categorical()~c("({n}/{N}),({p}%)"),
+             value = list(Fever~"Yes",Cough~"Yes",`Sore throat`~"Yes",Breathlessness~"Yes",
+                          Tiredness~"Yes",`Abdominal pain`~"Yes",
+                          Aches~"Yes",Ansomia~"Yes",`Chest pain`~"Yes",Chills~"Yes",
+                          `Cutaneous signs`~"Yes",`Diarrhoea`~"Yes", 
+                         `Diarrhoea`~"Yes", `Headache`~"Yes", 
+                         `Loss of taste`~"Yes",`Nasal congestion`~"Yes", `Runny nose`~"Yes", 
+                          Vomiting~"Yes",`Can spit`~"No"), 
+             
+                      label=list(Fever~"Fever",Cough~"Cough",`Sore throat`~"Sore throat",
+                                 `Breathlessness`~"Breathlessness",
+                                  Tiredness~"Tiredness", `Abdominal pain`~"Abdominal Pain", 
+                                  Aches~"Aches", Ansomia~"Anosmia",
+                                  `Chest pain`~"Chest pain", Chills~"Chills", 
+                         `Cutaneous signs`~"Cutaneous signs", `Diarrhoea`~"Diarrhoea", 
+                        `Headache`~"Headache",`Loss of taste`~"Loss of taste",
+                        `Nasal congestion`~" Nasal congestion", 
+                         `Runny nose`~"Runny nose", Vomiting~"Vomiting",`Can spit`~"Can Spit (No)")) %>% 
+  bold_labels() %>% 
+   add_n() %>% 
+  add_p() %>% 
+   #add_overall(last=T) %>% 
+   modify_header(label ~ "**Signs and symptoms**") %>%
+    bold_labels() %>% 
+  modify_caption("chi-square test of Signs and symptoms of confirmed-admitted COVID-19 cases treated in MSF supported health facilities between Jan 2020 to Dec 2021, by age categories.") 
+theme_gtsummary_compact()
+theme_gtsummary_journal(journal = "jama",set_theme = TRUE)
+
+tableq
+
+```
+
+```{r signs symptoms continet}
+
+
+```
+
+
+## Diseases Co-morbidities 
+
+```{r comorbidities by age group}
+COMORBIDTIES<-c("Cardiac diseases", "Hypertension", "Liver diseases", "Renal diseases", "Diabetes", "Neurological diseases", "Malignancy", "Malaria", "HIV", "Other immune deficiency diseases","Tuberculosis","Other chronic lung diseases","Measles","Obesity", "Malnutrition",'Smoking')
+
+Age_group_comorbidities<-data_linelist %>% 
+          mutate(HIV=case_when(MSF_hiv_status=="Negative" ~ "No",
+                               MSF_hiv_status=="Positive (no ARV)"~"Yes",
+                               MSF_hiv_status=="Positive (on ARV)"~"Yes",
+                               MSF_hiv_status=="Positive (unknown)"~"Yes",
+                               TRUE ~NA_character_ )) %>% ## change the levels of HIV to yes/no to keep only Yes
+        mutate(HIV=factor(HIV,
+                          levels=c("No",
+                                    "Yes",
+                                    "Unknown",
+                                    TRUE ~NA_character_ ))) %>% 
+  mutate(TB=case_when(MSF_tb_active=="No"~"No",
+                                MSF_tb_active=="Yes (currently on treatment)"~"Yes",
+                                MSF_tb_active=="Yes (currently no treatment)"~"Yes",
+                                MSF_tb_active=="Yes (unknown)"~"Yes",
+                                TRUE ~ NA_character_)) %>%   # change the levels of Tuberculosis to yes/no 
+mutate(TB=factor(TB,
+                  levels=c("NO",
+                           "Yes",
+                            "Unknown",
+                             NA_character_))) %>% 
+mutate(malaria=case_when(ind_MSF_malaria=="Positive"~"Yes",
+                         ind_MSF_malaria=="Negative"~"No",
+                         TRUE~NA_character_)) %>% 
+  mutate(malaria=factor(Malaria,
+                        levels=c("No",
+                                 "Yes",
+                                 "Unknown"))) %>% 
+
+  dplyr::select(`Age 7gp`,`Cardiac diseases`, Hypertension, `Liver diseases`, `Renal diseases`, Diabetes, `Neurological diseases`, Malignancy, malaria, HIV, `Other immune deficiency diseases`,TB,`Other chronic lung diseases`,Measles)
+
+table4<-Age_group_comorbidities %>% 
+ tbl_summary(by=`Age 7gp`,
+             missing="no",
+             value = list(`Cardiac diseases`~"Yes",
+                           Hypertension~"Yes",
+                          `Liver diseases`~"Yes",
+                          `Renal diseases`~"Yes",
+                           Diabetes~"Yes", 
+                          `Neurological diseases`~"Yes",
+                           Malignancy~"Yes",
+                           malaria~"Yes",
+                           HIV~"Yes",
+                          `Other immune deficiency diseases`~"Yes",
+                           TB~"Yes",
+                          `Other chronic lung diseases`~"Yes",
+                           Measles~"Yes"),
+             
+             label =list(`Cardiac diseases`~"Cardiac diseases",
+                           Hypertension~"Hypertension",
+                          `Liver diseases`~"Liver diseases",
+                          `Renal diseases`~"Renal diseases",
+                           Diabetes~"Diabetes", 
+                          `Neurological diseases`~"Neurological diseases",
+                           Malignancy~"Malignancy",
+                           malaria~"Malaria",
+                           HIV~"HIV",
+                          `Other immune deficiency diseases`~"Other immune deficiency diseases",
+                           TB~"Tuberculosis",
+                          `Other chronic lung diseases`~"Other chronic lung diseases",
+                           Measles~"Measles")) %>% 
+  bold_labels() %>% 
+  add_n() %>% 
+  add_overall(last=T) %>% 
+  modify_header(label ~ "**Comorbidities**") %>%
+  bold_labels() %>% 
+modify_caption("Disease comorbidities among confirmed-admitted  COVID-19 cases treated in MSF supported health afcilities between Jan 2020 to Dec 2021 stratified by age categories") %>% 
+modify_footnote(all_stat_cols()~"Data included between January 2020 to December 2021")
+  theme_gtsummary_compact()
+  theme_gtsummary_journal(journal = "jama", set_theme = TRUE)
+```
+
+
+Hypertension `r inline_text(comorb,variable='Hypertension',level='Yes')`, Cardiac diseases `r inline_text(comorb,variable='Cardiac diseases',level='Yes')`, and Diabetes `r inline_text(comorb,variable='Diabetes',level='Yes')` were the commonest commodities reported respectively. Patients Age 70-79 were the highest affected by Hypertension `r inline_text(table4,variable='Hypertension',column='stat_8')`  and cardiac diseases `r inline_text(table4,variable='Cardiac diseases',column='stat_8')` (Table 4).
+
+```{r table 4 comorbidties}
+table4
+#table4 %>%  as_flex_table() %>% 
+#set_table_properties(width = 1, layout = "autofit") %>%  ## this will give immediate word print instead of knitting and table can be copy and pasted
+  #print(preview = "docx")
+```
+
+
+```{r comorbidities by sex}
+sex_comorbidities<-data_linelist %>% 
+  dplyr::select(sex,`Cardiac diseases`, Hypertension, `Liver diseases`, `Renal diseases`, Diabetes, `Neurological diseases`, Malignancy, Malaria, HIV, `Other immune deficiency diseases`,Tuberculosis,`Other chronic lung diseases`,Measles)
+
+table5<-sex_comorbidities %>% 
+ tbl_summary(by=sex,
+             missing="no",
+             percent='row',
+             value = list(`Cardiac diseases`~"Yes",
+                           Hypertension~"Yes",
+                          `Liver diseases`~"Yes",
+                          `Renal diseases`~"Yes",
+                           Diabetes~"Yes", 
+                          `Neurological diseases`~"Yes",
+                           Malignancy~"Yes",
+                           Malaria~"Positive",
+                           HIV~"Yes",
+                          `Other immune deficiency diseases`~"Yes",
+                           Tuberculosis~"Yes",
+                          `Other chronic lung diseases`~"Yes",
+                           Measles~"Yes"),
+             
+             label =list(`Cardiac diseases`~"Cardiac diseases",
+                           Hypertension~"Hypertension",
+                          `Liver diseases`~"Liver diseases",
+                          `Renal diseases`~"Renal diseases",
+                           Diabetes~"Diabetes", 
+                          `Neurological diseases`~"Neurological diseases",
+                           Malignancy~"Malignancy",
+                           Malaria~"Malaria",
+                           HIV~"HIV",
+                          `Other immune deficiency diseases`~"Other immune deficiency diseases",
+                           Tuberculosis~"Tuberculosis",
+                          `Other chronic lung diseases`~"Other chronic lung diseases",
+                           Measles~"Measles")) %>% 
+  bold_labels() %>% 
+  add_n() %>% 
+  add_p() %>% 
+  #add_overall(last=T) %>% 
+  modify_header(label ~ "**Comorbidities**") %>%
+  bold_labels() %>% 
+modify_caption("Disease comorbidities among confirmed-admitted  COVID-19 cases treated in MSF supported health afcilities between Jan 2020 to Dec 2021 stratified by age categories") %>% 
+modify_footnote(all_stat_cols()~"Data included between January 2020 to December 2021")
+  theme_gtsummary_compact()
+  theme_gtsummary_journal(journal = "jama", set_theme = TRUE)
+table5
+#table2 %>%  as_flex_table() %>% 
+#set_table_properties(width = 1, layout = "autofit") %>%  ## this will give immediate word print instead of knitting and table can be copy and pasted
+  #print(preview = "docx")
+```
+
+
+
+## Additional factors 
+
+
+```{r age group versus risk factors for COVID}
+Age_group_riskfactors<-data_linelist %>% 
+  dplyr::select(`Age 7gp`,
+          Obesity,ind_MSF_smoking, Malnutrition,`Travel in the past 14 days`,
+          `Visited health care facility`, `Visited traditional healer`,`Participated in mass gathering`,
+             `Contact to case`) 
+
+ad_factors<-Age_group_riskfactors %>% 
+ tbl_summary(by=`Age 7gp`,
+             missing="no",
+              value=list(Obesity~"Yes",
+                          ind_MSF_smoking~"Yes",
+                          Malnutrition="Yes",
+                          `Travel in the past 14 days`~"Yes",
+                          `Visited health care facility`~"Yes", 
+                            `Visited traditional healer`~"Yes",
+                         `Participated in mass gathering`~"Yes",
+                           `Contact to case`~"Yes"),
+             label =list(Obesity~"Obesity",
+                          ind_MSF_smoking~"Smoking",
+                          Malnutrition~"Malnutrition",
+                          `Travel in the past 14 days`~"Travel in the past 14 days",
+                          `Visited health care facility`~"Visited health facility", 
+                            `Visited traditional healer`~"Visited traditional healer",
+                          `Participated in mass gathering`~"Participated in mass gathering",
+                           `Contact to case`~"Contact to case" )) %>% 
+  bold_labels() %>% 
+  add_n() %>%
+  add_overall(last=T) %>% 
+  modify_header(label ~ "**Variables**") %>%
+  bold_labels() %>% 
+modify_caption("Additional factors for diseases exposure and diseases severity among confirmed COVID-19 cases stratified by age categories") %>% 
+modify_footnote(all_stat_cols()~"Data included between January 2020 to December 2021")
+  theme_gtsummary_compact()
+  theme_gtsummary_journal(journal = "jama", set_theme = TRUE)
+#### occupation and contact inline text code 
+occ_contact<-data_linelist %>% 
+  select(Occupation,`Contact setting`, `Age 7gp`) %>% 
+  tbl_summary(by=`Age 7gp`) 
+
+### for inline text for occupation and contact setting
+
+additional_factors<-data_linelist %>% dplyr::select(
+          Occupation, `Contact setting`) %>% tbl_summary()
+
+```
+
+Among the cases with the contact setting identified, `r inline_text(additional_factors, variable='Contact setting',level='Community')` of the cases were community contact while `r inline_text(additional_factors, variable="Contact setting",level='Health facility')` were health facility contacts. First and second line health care workers were,`r inline_text(additional_factors, variable="Occupation",level='1st line healthcare worker')` and `r inline_text(additional_factors, variable="Occupation",level='2nd line healthcare worker')` respectively.
+
+164(7.9%) of the cases with information on obesity were obese, while 515 (18%) of the patients with smoking history identified were either current or former smokers.Only less than 1% of the patients admitted were malnourished.malnourished patients were reported across all age groups. 772(26%) of the cases were admitted with history of travel over the last 14 days while cases after contact to case were 1731 (26%) of the cases among the contact history documented were case with contact history to known case. 
+
+```{r insert table additional factors}
+
+ad_factors 
+#ad_factors %>%  as_flex_table() %>% 
+#set_table_properties(width = 1, layout = "autofit") %>%  ## this will give immediate word print instead of knitting and table can be copy and pasted
+  #print(preview = "docx")
+
+```
+
+
+```{r additioal factors by sex}
+
+sex_additional_factors<-data_linelist %>% 
+  dplyr::select(sex,
+          Obesity,ind_MSF_smoking, Malnutrition,`Travel in the past 14 days`,
+          `Visited health care facility`, `Visited traditional healer`,`Participated in mass gathering`,
+             `Contact to case`) 
+
+ad_factors_sex<-sex_additional_factors %>% 
+ tbl_summary(by=sex,
+             missing="no",
+              value=list(Obesity~"Yes",
+                          ind_MSF_smoking~"Yes",
+                          Malnutrition="Yes",
+                          `Travel in the past 14 days`~"Yes",
+                          `Visited health care facility`~"Yes", 
+                            `Visited traditional healer`~"Yes",
+                         `Participated in mass gathering`~"Yes",
+                           `Contact to case`~"Yes"),
+             label =list(Obesity~"Obesity",
+                          ind_MSF_smoking~"Smoking",
+                          Malnutrition~"Malnutrition",
+                          `Travel in the past 14 days`~"Travel in the past 14 days",
+                          `Visited health care facility`~"Visited health facility", 
+                            `Visited traditional healer`~"Visited traditional healer",
+                          `Participated in mass gathering`~"Participated in mass gathering",
+                           `Contact to case`~"Contact to case" )) %>% 
+  bold_labels() %>% 
+  add_n() %>%
+  add_overall() %>% 
+  modify_header(label ~ "**Variables**") %>%
+  bold_labels() %>% 
+modify_caption("Additional factors for diseases exposure and diseases severity among confirmed COVID-19 cases stratified by sex") 
+  theme_gtsummary_compact()
+  theme_gtsummary_journal(journal = "jama", set_theme = TRUE)
+ad_factors_sex
+#ad_factors_sex %>%  as_flex_table() %>% 
+#set_table_properties(width = 1, layout = "autofit") %>%  ## this will give immediate word print instead of knitting and table can be copy and pasted
+  #print(preview = "docx")
+```
+
+## Pregnancy
+Among the number of patients with the information  
+
+```{r pregnancy and summaries}
+Preg_socio_male_female<-data_linelist %>% 
+  filter(pregnancy%in%c("No", "pregnant","")) 
+
+Preg_socio_male_female<-Preg_socio_male_female%>% 
+  dplyr::select(`Age preg`,pregnancy, Continent) 
+
+ pp1<-Preg_socio_male_female %>% 
+ tbl_summary(by=pregnancy,missing="no") %>% 
+  bold_labels() %>% 
+  add_n() %>% 
+  modify_header(label ~ "**Variables**") %>%
+  #modify_spanning_header(c("stat_3","stat_4","stat_5") ~ "**Sex Female and preg**") %>% 
+  #modify_spanning_header(c("stat_2" ~ "**Sex Male**")) %>% 
+  #modify_spanning_header(c("stat_1"~"**Sex vs Preg**")) %>% 
+  bold_labels() %>% 
+  modify_header(label ~ "**Variables**") %>%
+  modify_caption("Continenet and age group of confirmed COVID-19 cases stratified by sex and pregnacy") %>% 
+  modify_footnote(all_stat_cols()~"This data referes to COVID-19 cases treated in MSF supported facilities between dec 2020 to dec 2021")
+theme_gtsummary_compact()
+theme_gtsummary_journal(journal = "jama",set_theme = TRUE)
+pp1
+
+ppp1<-pp1 %>% 
+  as_gt()
+gtsave(ppp1,
+       file.path(path.local, paste0('Preg_table_1', '.png'))) %>%
+  invisible()
+
+```
+
+
+### Signs and symptoms of confirmed COVID-19 patients by sex and pregnacy 
+
+
+{r signs and symptoms of cases reported by pregnancy}
+preg_signssymptoms<-data_linelist %>% 
+  dplyr::select( Fever, `Abdominal pain`, Aches,  Ansomia,`Breathlessness`,`Chest pain`, `Chest pain`,  Chills,  Cough,  `Cutaneous signs`, `Diarrhoea`,  `Headache`,  `Loss of taste`, `Nasal congestion`,  `Runny nose`,  `Sore throat`,Vomiting,  Tiredness, pregnancy) 
+
+pp2<-preg_signssymptoms %>% 
+ tbl_summary(by=pregnancy,missing="no") %>% 
+  bold_labels() %>% 
+  add_n() %>% 
+  modify_header(label ~ "**Variables**") %>%
+  modify_spanning_header(c("stat_3","stat_4","stat_5") ~ "**Sex Female and preg**") %>% 
+  modify_spanning_header(c("stat_2" ~ "**Sex Male**")) %>% 
+  modify_spanning_header(c("stat_1"~"**Sex vs Preg**")) %>% 
+  bold_labels() %>% 
+  modify_header(label ~ "**Variables**") %>%
+  modify_caption("Signs and symptoms of confirmed COVID-19 cases stratified by sex and pregncacy") %>% 
+modify_footnote(all_stat_cols()~"This data referes to COVID-19 cases treated in MSF supported facilities between dec 2020 to dec 2021")
+theme_gtsummary_compact()
+theme_gtsummary_journal(journal = "jama",set_theme = TRUE)
+pp2
+  
+ppp2<-pp2 %>% 
+  as_gt()
+gtsave(ppp2,
+       file.path(path.local, paste0('Preg_tble_2', '.png'))) %>%
+  invisible()  
+ #pp2 %>%  as_flex_table() %>% 
+#set_table_properties(width = 1, layout = "autofit") %>%  ## this will give immediate word print instead of knitting and table can be copy and pasted
+  #print(preview = "docx")
+
+
+### Co-morbidities of confirmed COVID-19 patients startified  by  sex and pregnancy
+
+{r comorbidities by pregnanacy}
+preg_comorbidities<-data_linelist %>% 
+  dplyr::select(`Cardiac diseases`, Hypertension, `Liver diseases`, `Renal diseases`, Diabetes, `Neurological diseases`, Malignancy, Malaria, HIV, `Other immune deficiency diseases`,Tuberculosis,`Other chronic lung diseases`,Measles, pregnancy) 
+
+pp3<-preg_comorbidities %>% 
+ tbl_summary(by=pregnancy,missing="no") %>% 
+  bold_labels() %>% 
+  add_n() %>% 
+  modify_header(label ~ "**Variables**") %>%
+  modify_spanning_header(c("stat_3","stat_4","stat_5") ~ "**Sex Female and preg**") %>% 
+  modify_spanning_header(c("stat_2" ~ "**Sex Male**")) %>% 
+  modify_spanning_header(c("stat_1"~"**Sex vs Preg**")) %>% 
+  bold_labels() %>% 
+modify_caption("Other disease comorbidities among confirmed COVID-19 cases stratified by sex and pregnacy") %>% 
+modify_footnote(all_stat_cols()~"Data included between January 2020 to December 2021")
+  theme_gtsummary_compact()
+  theme_gtsummary_journal(journal = "jama", set_theme = TRUE)
+pp3
+  
+  ppp3<-pp3 %>% 
+  as_gt()
+gtsave(ppp3,
+       file.path(path.local, paste0('Preg_tble_3', '.png'))) %>%
+  invisible() 
+
+
+### Risk factors for aquiring infection and severity of the diseases by sex and pregnancy
+
+
+{r pregnancy versus risk factors for COVID }
+Age_group_riskfactors<-data_linelist %>% 
+  dplyr::select(Obesity,Smoking, Malnutrition,Occupation, `Travel in the past 14 days`,
+          `Visited health care facility`, `Visited traditional healer`,`Participated in mass gathering`,
+            `Contact setting`, `Contact to case`, pregnancy) 
+
+pp4<-Age_group_riskfactors %>% 
+ tbl_summary(by=pregnancy,missing="no") %>% 
+  bold_labels() %>% 
+  add_n() %>% 
+  modify_header(label ~ "**Variables**") %>%
+  modify_spanning_header(c("stat_3","stat_4","stat_5") ~ "**Sex Female and preg**") %>% 
+  modify_spanning_header(c("stat_2" ~ "**Sex Male**")) %>% 
+  modify_spanning_header(c("stat_1"~"**Sex vs Preg**")) %>% 
+  bold_labels() %>% 
+modify_caption("Riskfactors for diseases exposure and diseases severity among confirmed COVID-19 cases stratified by sex and pregncacy") %>% 
+modify_footnote(all_stat_cols()~"Data included between January 2020 to December 2021, *missing values are excluded") 
+  theme_gtsummary_compact()
+  theme_gtsummary_journal(journal = "jama", set_theme = TRUE)
+  
+  pp4
+  
+  ppp4<-pp4 %>% 
+  as_gt()
+gtsave(ppp4,
+       file.path(path.local, paste0('Preg_tble_4', '.png'))) %>%
+  invisible() 
+  
+
+
+### Traetment and outcome of COVID-19 patients strtified by sex and pregnancy
+
+{r treatment outcome of patients by pregnancy}
+preg_rx<-data_linelist %>% 
+  filter(pregnancy=='Sex Female and preg')
+preg_rx<-preg_rx %>% 
+  dplyr::select(`Delay between onset and consultation`,`Length of stay in Hospital`,Admitted,`ICU admitted`,`Ventilation therapy`,`Oxygen therapy`,Outcome,pregnancy) 
+
+pp5<-preg_rx %>% 
+ tbl_summary(by=pregnancy,missing="no") %>% 
+  bold_labels() %>% 
+  add_n() %>% 
+  modify_header(label ~ "**Variables**") %>%
+  modify_spanning_header(c("stat_3","stat_4","stat_5") ~ "**Sex Female and preg**") %>% 
+  modify_spanning_header(c("stat_2" ~ "**Sex Male**")) %>% 
+  modify_spanning_header(c("stat_1"~"**Sex vs Preg**")) %>% 
+  bold_labels() %>% 
+modify_caption("Treatment outcome and time to consultation and duration of hospital stay of confirmed COVID-19 cases stratified by geographic areas") %>% 
+modify_footnote(all_stat_cols()~"Data included between January 2020 to December 2021") 
+  theme_gtsummary_compact()
+  theme_gtsummary_journal(journal = "jama", set_theme = TRUE)
+  
+  pp5
+  
+  ppp5<-pp5 %>% 
+  as_gt()
+gtsave(ppp5,
+       file.path(path.local, paste0('Preg_tble_5', '.png'))) %>%
+  invisible() 
+
+
+
+
+
+
+
+
+
+## Diseases severity
+
+Among all admitted patients `r inline_text(severity,variable='MSF_severity',level='Mild')` were mild cases,`r inline_text(severity,variable='MSF_severity', level='Severe')` severe cases, `r inline_text(severity,variable='MSF_severity',level='Critical')` critical cases and `r inline_text(severity,variable='MSF_severity',level='Moderate')` moderate cases. The proportion of critical cases was higher in the middle east and north Africa region 953 (72%) followed by Latin America and the Caribbeans 196 (15%) the same fro sever cases which was 2140 (57%) and 411 (11%) respectively. The over all male to female ratio of severe and critical cases were 1.6 and 1.4 respectively.    
+
+```{r severity versus socio demographics}
+data_linelist<-data_linelist %>% 
+  mutate(MSF_severity=as.factor(MSF_severity)) 
+         
+         data_linelist<-data_linelist %>% 
+           mutate(MSF_severity=factor(MSF_severity,
+                                levels=c("Critical",
+                                         "Severe",
+                                         "Moderate",
+                                          "Mild")))
+       
+severity_demo<-data_linelist %>% 
+  dplyr::select(`Age 7gp`,sex,Continent, MSF_severity) 
+
+ss1<- severity_demo %>% 
+ tbl_summary(by=MSF_severity) %>% 
+  bold_labels() %>% 
+  add_n() %>% 
+  modify_header(label ~ "**Variables**") %>%
+  modify_caption("Sociodemographic characterstics of confirmed COVID-19 cases stratified by diseases severity") 
+theme_gtsummary_compact()
+theme_gtsummary_journal(journal = "jama",set_theme = TRUE)
+
+ss1
+#ss1 %>%  as_flex_table() %>% 
+#set_table_properties(width = 1, layout = "autofit") %>%  ## this will give immediate word print instead of knitting and table can be copy and pasted
+  #print(preview = "docx")
+## HTML output
+sss1<-ss1 %>% 
+  as_gt() 
+
+gtsave(sss1,
+       file.path(path.local, paste0('severity_table_1', '.png'))) %>% #.PDF or.SVG
+  invisible() 
+
+```
+
+
+```{r disease signs and symptoms severity}
+severity_signssymptoms<-data_linelist %>% 
+  dplyr::select(MSF_severity, Fever,Cough, `Sore throat`, Breathlessness,Tiredness,`Abdominal pain`, Aches,  Ansomia,`Chest pain`, `Chest pain`,  Chills,    `Cutaneous signs`, `Diarrhoea`,  `Headache`,  `Loss of taste`, `Nasal congestion`,  `Runny nose`,  Vomiting,`Can spit` ) 
+
+table33<-severity_signssymptoms %>% 
+ tbl_summary(by=MSF_severity,
+             missing = "no",
+             value = list(Fever~"Yes",Cough~"Yes",`Sore throat`~"Yes",Breathlessness~"Yes",
+                          Tiredness~"Yes",`Abdominal pain`~"Yes",
+                          Aches~"Yes",Ansomia~"Yes",`Chest pain`~"Yes",Chills~"Yes",
+                          `Cutaneous signs`~"Yes",`Diarrhoea`~"Yes", 
+                         `Diarrhoea`~"Yes", `Headache`~"Yes", 
+                         `Loss of taste`~"Yes",`Nasal congestion`~"Yes", `Runny nose`~"Yes", 
+                          Vomiting~"Yes",`Can spit`~"No"), 
+             
+                      label=list(Fever~"Fever",Cough~"Cough",`Sore throat`~"Sore throat",
+                                 `Breathlessness`~"Breathlessness",
+                                  Tiredness~"Tiredness", `Abdominal pain`~"Abdominal Pain", 
+                                  Aches~"Aches", Ansomia~"Anosmia",
+                                 `Chest pain`~"Chest pain", Chills~"Chills", 
+                                  `Cutaneous signs`~"Chills", `Diarrhoea`~"Diarrhoea", 
+                                   `Headache`~"Headache",`Loss of taste`~"Loss of taste",
+                                  `Nasal congestion`~" Nasal congestion", 
+                                   `Runny nose`~"Runny nose", Vomiting~"Vomiting",`Can spit`~"Can Spit")) %>% 
+  bold_labels() %>% 
+   add_n() %>%
+   modify_header(label ~ "**Signs and symptoms**") %>%
+    bold_labels() %>% 
+  modify_caption("Signs and symptoms of confirmed-admitted COVID-19 cases treated in MSF supported health facilities between Jan 2020 to Dec 2021, by severity categories") 
+theme_gtsummary_compact()
+theme_gtsummary_journal(journal = "jama",set_theme = TRUE)
+
+table33 
+#table33  %>%  as_flex_table() %>% 
+#set_table_properties(width = 1, layout = "autofit") %>%  ## this will give immediate word print instead of knitting and table can be copy and pasted
+  #print(preview = "docx")
+```
+
+The commonest presentation among critical and severe cases was Breathlessness `r inline_text(table33,variable='Breathlessness', stat_2)` and `r inline_text(table33,variable='Breathlessness', stat_3)`  followed by  `r inline_text(table33,variable='Cough',stat_2)` and `r inline_text(table33,variable='Cough', stat_3)`,  Fever `r inline_text(table33,variable='Fever',stat_2)` and `r inline_text(table33,variable='Fever', stat_3)` and General tiredness `r inline_text(table33,variable='Tiredness',stat_2)` and `r inline_text(table33,variable='Tiredness', stat_3)`. 
+
+
+### Severity  and other diseases comorbidties
+
+ Cardiac disease and Hypertension were the highest co-morbidtities among the critical and Sever COVID -`9 patients. 749 (68%) of the critical cases and 1347 (42%) of the severe cases had cardiac diseases respectively. Hypertension was in 639 (65%) of the critical cases and 1155 (40%) of the severe cases.
+
+```{r severity by diseases comorbidity}
+severity_comorbidities<-data_linelist %>% 
+  dplyr::select(MSF_severity,`Cardiac diseases`, Hypertension, `Liver diseases`, `Renal diseases`, Diabetes, `Neurological diseases`, Malignancy, Malaria, HIV, `Other immune deficiency diseases`,Tuberculosis,`Other chronic lung diseases`,Measles)
+
+table6<-severity_comorbidities %>% 
+ tbl_summary(by=MSF_severity,
+             missing="no",
+             value = list(`Cardiac diseases`~"Yes",
+                           Hypertension~"Yes",
+                          `Liver diseases`~"Yes",
+                          `Renal diseases`~"Yes",
+                           Diabetes~"Yes", 
+                          `Neurological diseases`~"Yes",
+                           Malignancy~"Yes",
+                           Malaria~"Positive",
+                           HIV~"Yes",
+                          `Other immune deficiency diseases`~"Yes",
+                           Tuberculosis~"Yes",
+                          `Other chronic lung diseases`~"Yes",
+                           Measles~"Yes"),
+             
+             label =list(`Cardiac diseases`~"Cardiac diseases",
+                           Hypertension~"Hypertension",
+                          `Liver diseases`~"Liver diseases",
+                          `Renal diseases`~"Renal diseases",
+                           Diabetes~"Diabetes", 
+                          `Neurological diseases`~"Neurological diseases",
+                           Malignancy~"Malignancy",
+                           Malaria~"Malaria",
+                           HIV~"HIV",
+                          `Other immune deficiency diseases`~"Other immune deficiency diseases",
+                           Tuberculosis~"Tuberculosis",
+                          `Other chronic lung diseases`~"Other chronic lung diseases",
+                           Measles~"Measles")) %>% 
+  bold_labels() %>% 
+  add_n() %>% 
+  #add_p() %>% 
+  #add_overall(last=T) %>% 
+  modify_header(label ~ "**Comorbidities**") %>%
+  bold_labels() %>% 
+modify_caption("Disease comorbidities among confirmed-admitted  COVID-19 cases treated in MSF supported health afcilities between Jan 2020 to Dec 2021 stratified severity") %>% 
+modify_footnote(all_stat_cols()~"Data included between January 2020 to December 2021")
+  theme_gtsummary_compact()
+  theme_gtsummary_journal(journal = "jama", set_theme = TRUE)
+  
+table6
+#table6  %>%  as_flex_table() %>% 
+#set_table_properties(width = 1, layout = "autofit") %>%  ## this will give immediate word print instead of knitting and table can be copy and pasted
+  #print(preview = "docx")
+```
+
+### Severity and  Other factors
+
+Among the Former and current smokers 45 (21%) of them were critical cases 161 (16%) were critical cases. 32 (11%) of the cases critical cases were Obese and 102 (11%) of the severe cases were also obese. 
+
+```{r severity versus additional factors for covid}
+severity_riskfactors<-data_linelist %>% 
+  dplyr::select(Obesity,ind_MSF_smoking,Pregnancy, Malnutrition, `Travel in the past 14 days`,
+          `Visited health care facility`, `Visited traditional healer`,`Participated in mass gathering`,
+             `Contact to case`,MSF_severity) 
+
+add_factors_sev<-severity_riskfactors %>% 
+ tbl_summary(by=MSF_severity,
+             missing="no",
+             value=list(Obesity~"Yes",
+                          ind_MSF_smoking~"Yes",
+                          Malnutrition="Yes",
+                          `Travel in the past 14 days`~"Yes",
+                          `Visited health care facility`~"Yes", 
+                            `Visited traditional healer`~"Yes",
+                         `Participated in mass gathering`~"Yes",
+                           `Contact to case`~"Yes",
+                        Pregnancy~"Yes"),
+             label =list(Obesity~"Obesity",
+                          ind_MSF_smoking~"Smoking",
+                          Malnutrition~"Malnutrition",
+                          `Travel in the past 14 days`~"Travel in the past 14 days",
+                          `Visited health care facility`~"Visited health facility", 
+                            `Visited traditional healer`~"Visited traditional healer",
+                          `Participated in mass gathering`~"Participated in mass gathering",
+                           `Contact to case`~"Contact to case",
+                         Pregnancy~"Pregnant")) %>% 
+  bold_labels() %>% 
+  add_n() %>% 
+  modify_header(label ~ "**Additional factors**") %>%
+  bold_labels() %>% 
+ #add_overll_row() %>% 
+modify_caption("Additional factors for diseases diseases severity among confirmed COVID-19 cases stratified by age categories") %>% 
+modify_footnote(all_stat_cols()~"Data included between January 2020 to December 2021")
+  theme_gtsummary_compact()
+  theme_gtsummary_journal(journal = "jama", set_theme = TRUE)
+  
+occ_contact_sev<-data_linelist %>% 
+  select(Occupation,`Contact setting`, MSF_severity) %>% 
+  tbl_summary(by=MSF_severity, missing='no') %>% bold_labels() %>% add_n()
+
+addfactors_sev=tbl_stack(list(add_factors_sev,occ_contact_sev))
+
+add_factors_sev
+#add_factors_sev  %>%  as_flex_table() %>% 
+#set_table_properties(width = 1, layout = "autofit") %>%  ## this will give immediate word print instead of knitting and table can be copy and pasted
+  #print(preview = "docx")  
+```
+
+```{r severity versus the gender}
+
+
+```
+
+### Diseases severity and treatment options 
+
+375 (38%) of the critical cases and 880 (40%) of the sever cases seek health care  after 7-13 days of delay. However, Most of the mild and moderate cases were also in the delay of 7-13 days. 
+ 623 (40%) of the mild cases had stayed for 7-13 days in the hospital compared to only (302)26% of the critical and 932 (29%) of the severe cases. Among the critical cases with oxygen therapy information available,  702 (53%) of the critical cases, 78% of the severe cases, 24% of the Moderate cases and 4.3% of the mild cases were treated with oxygen.  605(46%)of the critical cases and 1181(32%) of severe cases were admitted to ICU. In addition 539 (41%) of the critical cases and 781 (21%) of the sever cases were treated with mechanical ventilation.  
+
+```{r severity versu treatment outcome}
+severity_rx<-data_linelist %>% 
+  dplyr::select(`Delay between onset and consultation`,`Length of stay in Hospital`,`ICU admitted`,`Ventilation therapy`,`Oxygen therapy`,MSF_severity) 
+
+ss5<-severity_rx %>% 
+ tbl_summary(by=`MSF_severity`,
+             missing="no",
+             statistic = all_categorical()~c("({n}/{N}),{p}")) %>% 
+  bold_labels() %>% 
+  add_n() %>% 
+  modify_header(label ~ "**Variables**") %>%
+  bold_labels() %>% 
+modify_caption("Riskfactors for diseases exposure and diseases severity among confirmed COVID-19 cases stratified by diseases severity") %>% 
+modify_footnote(all_stat_cols()~"Data included between January 2020 to December 2021") 
+  theme_gtsummary_compact()
+  theme_gtsummary_journal(journal = "jama", set_theme = TRUE)
+  ss5
+  #ss5  %>%  as_flex_table() %>% 
+#set_table_properties(width = 1, layout = "autofit") %>%  ## this will give immediate word print instead of knitting and table can be copy and pasted
+  #print(preview = "docx") 
+sss5<-ss5 %>% 
+  as_gt()
+  gtsave(sss5,
+       file.path(path.local, paste0('severity_table_5', '.png'))) %>%
+  invisible() 
+```
+
+
+
+```{r Severity of patients according to the analysis plan, mutated to Mild, severe and died}
+
+severity_socio<-data_linelist %>% 
+   dplyr::select(`Age group`,sex,Continent, Fever,Cough, `Abdominal pain`, Aches,  Ansomia,`Breathlessness`,`Chest pain`, `Chest pain`,  Chills,    `Cutaneous signs`, `Diarrhoea`,  `Headache`,  `Loss of taste`, `Nasal congestion`,  `Runny nose`,  `Sore throat`,Vomiting,  Tiredness, `Cardiac diseases`, Hypertension, `Liver diseases`, `Renal diseases`, Diabetes, `Neurological diseases`, Malignancy, Malaria, HIV, `Other immune deficiency diseases`,Tuberculosis,`Other chronic lung diseases`,Measles,
+
+## other risk factors 
+          Obesity,Smoking, Malnutrition,Occupation, `Travel in the past 14 days`,
+          `Visited health care facility`, `Visited traditional healer`,`Participated in mass gathering`,
+            `Contact setting`, `Contact to case`,`Delay between onset and consultation`,`Length of stay in Hospital`,Admitted,Continent,`ICU admitted`,`Ventilation therapy`,`Oxygen therapy`,Outcome, Severity )
+           
+ sss<-severity_socio %>% 
+ tbl_summary(by=Severity,missing="no") %>% 
+bold_labels() %>% 
+  add_n() %>% 
+  modify_header(label ~ "**Variables**") %>%
+  bold_labels() %>%  
+as_gt() %>% 
+  tab_row_group(label="Treatment and Outcomes",
+                rows = 191:210) %>% 
+  
+  tab_row_group(label="Other risk factors",
+                rows = 146:190) %>% 
+  
+  tab_row_group(label="Comorbidities",
+                rows = 89:145) %>% 
+  
+  tab_row_group(label="Signs and Symptoms",
+                rows = 21:88) %>% 
+  
+  tab_row_group(label="Socio-demographics",
+                rows = 1:20
+                  ) %>%  
+  tab_source_note(source_note = "(*) These data were reported from MSF linelist") %>% 
+  tab_options(column_labels.font.weight = 'bold',
+              row_group.font.weight = 'bold',
+              row_group.background.color = "gray",
+              row_group.font.size = "large",
+              data_row.padding = px(1),
+              row_group.padding = px(1),
+              summary_row.padding = px(1)) %>%  
+  tab_header(
+    title = html(paste('Table: Soco demographic and clinical characterstics of COVID-19 confirmed cases startified by disease severity (Mild, Severe and Dead)', format(date_max_report, "%d %b %Y"))))
+ 
+ gtsave(sss,
+       file.path(path.local, paste0('severity long table _3class', '.png'))) %>%
+  invisible() 
+ 
+## This be done in tbl_summary using the tbl_stack after creating the tables separately.so that it can knit in word.
+```
+
+
+```{r cases with known outcome}
+known_outcome<-data_linelist %>% 
+  filter(outcome_patcourse_status%in%c("Cured","Died","Sent back home"),Admitted=="Yes") %>% 
+  tally()
+```
+
+## Treatment outcome
+
+Treatment outcomes among confirmed and admitted patients were calculated only among patients with known outcome(Cured,sent back home and died). Cases with unknown outcome, left against medical advise and transferred patients are not included in the denominator. The total number of admitted patients with known outcome were `r known_outcome` (61%) cases. 
+
+```{r median day of delay and median day of admission}
+data_linelist<-data_linelist %>% 
+  mutate(delay=as.numeric(MSF_date_consultation - patcourse_dateonset))
+delay_stay<-data_linelist %>% 
+  select(MSF_length_stay,delay) %>% 
+  tbl_sumary(statistic=all_continious()~c("{median},{IQR}"))
+
+```
+
+```{r age group versus treatment outcome}
+data_linelist<-data_linelist %>% 
+  mutate(Outcome=factor(outcome_patcourse_status,
+    levels=c("Died",
+           "Cured",
+           "Sent back home",
+            "Transferred",
+            "Left against medical advice",
+            "Other",
+            "(Pending/Unknown)")))
+    
+Age_group_rx<-data_linelist %>% 
+  dplyr::select(`Age 7gp`, `Delay between onset and consultation`,`Length of stay in Hospital`,`ICU admitted`,`Ventilation therapy`,`Oxygen therapy`,Outcome) 
+
+
+Tablex<-Age_group_rx %>% 
+ tbl_summary(by=Outcome,
+             missing="no") %>% 
+  bold_labels() %>% 
+  add_n() %>% 
+  modify_header(label ~ "**Variables**") %>%
+  bold_labels() %>% 
+modify_caption("Table: Riskfactors for diseases exposure and diseases severity among confirmed admited COVID-19 cases stratified by age categories") %>% 
+modify_footnote(all_stat_cols()~"Data included between January 2020 to December 2021") 
+  theme_gtsummary_compact()
+  theme_gtsummary_journal(journal = "jama", set_theme = TRUE)
+
+```
+
+
+
+```{r over all case fatality rate}
+data_linelist$DIED <- str_detect(data_linelist$Outcome, "Died") # direct died in to DIED variable
+
+# use arguments from above to produce overall CFR
+overall_CFR<- data_linelist %>% 
+  filter(outcome_patcourse_status %in% c('Cured',"Died",'Sent back home')) %>% 
+  case_fatality_rate_df(deaths = DIED, mergeCI = TRUE) %>%
+  rename("Deaths" = deaths,
+         "Cases" = population,
+         "CFR (%)" = cfr,
+         "95%CI" = ci) %>% 
+  knitr::kable(digits = 1,caption = "Table: Over all cases fatality rate of confirmed COVID 19 patients betwen January 2020 to december 2021")         # print nicely with 1 decimal digit
+```  
+
+The average length of delay and standard deviation between onset of symptom and the date of consultation was
+`r inline_text(length_delay,variable='delay')` days and the length of stay in hospital was
+`r inline_text(length_stay,variable='MSF_length_stay')` days.  Total of `r nrow(data_linelist)` cases were included in this analysis, all confirmed and admitted patients, `r inline_text(treatoutcome, variable='ICU admitted',level='Yes')` cases admitted to ICU, `r inline_text(treatoutcome, variable='Oxygen therapy',level='Yes')` treated with oxygen and `r inline_text(treatoutcome, variable='Ventilation therapy',level='Yes')` patients were ventilated. The over all mortality among the confirmed admitted patients was `r data_linelist %>% case_fatality_rate_df(deaths = DIED, mergeCI = TRUE) %>% pull(cfr)` with 95% CI of `r data_linelist %>% case_fatality_rate_df(deaths = DIED, mergeCI = TRUE) %>% pull(ci)`. 
+
+```{r table for tablex}
+Tablex
+#Tablex %>%  as_flex_table() %>% 
+#set_table_properties(width = 1, layout = "autofit") %>%  ## this will give immediate word print instead of knitting and table can be copy and pasted
+  #print(preview = "docx") 
+```
+
+
+
+```{r case fatality by sex}
+### cases fatality rate by sex 
+
+cfr_sex<-data_linelist %>%
+  filter(outcome_patcourse_status %in% c('Cured',"Died",'Sent back home')) %>% 
+  mutate(sex = forcats::fct_explicit_na(sex, "-")) %>%
+  case_fatality_rate_df(deaths= DIED, group = sex, mergeCI = TRUE, add_total = TRUE) %>%
+  rename("Sex" = sex, 
+         "Deaths" = deaths, 
+         "Cases" = population, 
+         "CFR (%)" = cfr, 
+         "95%CI" = ci) %>% 
+  knitr::kable(digits = 1, caption = "Table : Cases fatality rate of admmitted COVID-19 patients stratified by sex between Jan 2020 to Dec 2021")
+```
+
+Cases fatality rate was `r data_linelist %>% mutate(sex = forcats::fct_explicit_na(sex, "-")) %>%case_fatality_rate_df(deaths= DIED, group = sex, mergeCI = TRUE, add_total = TRUE) %>%  filter(sex=='Male') %>% pull(cfr)` and 95% CI of `r data_linelist %>% mutate(sex = forcats::fct_explicit_na(sex, "-")) %>% case_fatality_rate_df(deaths= DIED, group = sex, mergeCI = TRUE, add_total = TRUE) %>% filter(sex=='Male') %>% pull(ci)` among male patients  and `r data_linelist %>% mutate(sex = forcats::fct_explicit_na(sex, "-")) %>%case_fatality_rate_df(deaths= DIED, group = sex, mergeCI = TRUE, add_total = TRUE) %>%  filter(sex=='Female') %>% pull(cfr)` and 95% CI of `r data_linelist %>% mutate(sex = forcats::fct_explicit_na(sex, "-")) %>%case_fatality_rate_df(deaths= DIED, group = sex, mergeCI = TRUE, add_total = TRUE) %>%  filter(sex=='Female') %>% pull(ci)` among females. 
+  
+```{r cfr sex,fig.height=7, fig.width=8}
+#cfr_sex
+
+## Plot
+df_severity_sex <- data_linelist %>% 
+  filter(ind_MSF_covid_status == "Confirmed") %>% 
+  group_by(`sex`) %>% 
+  summarize(
+    n = n(),
+    n_hosp = sum(merge_admit == "Yes", na.rm = TRUE),
+    n_hosp_known = sum(merge_admit %in% c("Yes", "No"), na.rm = TRUE),
+    p_hosp = n_hosp / n_hosp_known,
+    p_hosp_low95 = as.numeric(binom.test(n_hosp, n_hosp_known)$conf.int)[1],
+    p_hosp_upp95 = as.numeric(binom.test(n_hosp, n_hosp_known)$conf.int)[2],
+    n_died = sum(ind_outcome_patcourse_status == "Died" &
+                   merge_admit == "Yes", na.rm = TRUE),
+    n_died_known = sum(ind_outcome_patcourse_status %in% c("Died", "Cured", 'Sent back home') & merge_admit == "Yes", na.rm = TRUE),
+    p_died_low95 = as.numeric((binom.test(n_died, n_died_known)$conf.int)*100,.1)[1],
+    p_died_upp95 = as.numeric((binom.test(n_died, n_died_known)$conf.int)*100,.1)[2],
+    p_died = rounder((n_died / n_died_known)*100,.1),
+     hosp_lab = paste0("(", n_hosp_known, ")"),
+    # died_lab = paste0("(", n_died_known, ")"),
+    #hosp_lab = paste0("(", n_hosp_known, ")"),
+    died_lab = p_died
+    #hosp_lab = paste0("(", n_hosp, "/", n_hosp_known, ")"),
+    #died_lab = paste0("(", n_died, "/", n_died_known, ")")
+  ) %>% 
+  ungroup() 
+  #purrr::modify_if(df_severity_sex, ~is.numeric(.), ~round(., 0))
+
+dots_cfr_sex <- ggplot(df_severity_sex, aes(x = sex)) +
+  geom_point(aes(y = p_died), size = 2,color='red') +
+  geom_errorbar(aes(ymin = p_died_low95, ymax = p_died_upp95)) +
+  geom_text(aes(label = died_lab, y = p_died), hjust=-0.5, size = 3) +
+  #scale_y_continuous(breaks = seq(0, 1, 0.2), limits = c(0, 1), labels = scales::percent_format(accuracy = 1)) + 
+  labs(x = "Sex", y = "CFR") 
+
+#dots_cfr_sex
+```
+
+
+```{r case fatality by age group,fig.height=7,fig.width=8}
+#plot the CFR with 95% CI
+df_severity_age <- data_linelist %>% 
+  filter(ind_MSF_covid_status == "Confirmed") %>% 
+  group_by(`Age 7gp`) %>% 
+  summarize(
+    n = n(),
+    n_hosp = sum(merge_admit == "Yes", na.rm = TRUE),
+    n_hosp_known = sum(merge_admit %in% c("Yes", "No"), na.rm = TRUE),
+    p_hosp = n_hosp / n_hosp_known,
+    p_hosp_low95 = as.numeric(binom.test(n_hosp, n_hosp_known)$conf.int)[1],
+    p_hosp_upp95 = as.numeric(binom.test(n_hosp, n_hosp_known)$conf.int)[2],
+    n_died = sum(ind_outcome_patcourse_status == "Died" &
+                   merge_admit == "Yes", na.rm = TRUE),
+    n_died_known = sum(ind_outcome_patcourse_status %in% c("Died", "Cured", 'Sent back home') & merge_admit == "Yes", na.rm = TRUE),
+    p_died_low95 = as.numeric((binom.test(n_died, n_died_known)$conf.int)*100,.1)[1],
+    p_died_upp95 = as.numeric((binom.test(n_died, n_died_known)$conf.int)[2]*100,.1),
+    p_died = rounder((n_died / n_died_known)*100,.1),
+     hosp_lab = paste0("(", n_hosp_known, ")"),
+    # died_lab = paste0("(", n_died_known, ")"),
+    #hosp_lab = paste0("(", n_hosp_known, ")"),
+    died_lab = p_died
+    #hosp_lab = paste0("(", n_hosp, "/", n_hosp_known, ")"),
+    #died_lab = paste0("(", n_died, "/", n_died_known, ")")
+  ) %>% 
+  ungroup()
+
+dots_cfr_agegroup <- ggplot(df_severity_age, aes(x = `Age 7gp`)) +
+  geom_point(aes(y = p_died), size = 2,color='red') +
+  geom_errorbar(aes(ymin = p_died_low95, ymax = p_died_upp95)) +
+  #facet_wrap(~Continent, ncol = 2, scales = "free_x") +
+  geom_text(aes(label = died_lab, y = p_died),hjust=-0.5, size = 3) +
+  #scale_y_continuous(breaks = seq(0, 1, 0.2), limits = c(0, 1), labels = scales::percent_format(accuracy = 1)) + 
+  labs(x = "Age Group",
+       y = "CFR", 
+       caption = "Case fatality rate of confirmed patients by age group and sex") +
+  theme(axis.text.x = element_text(angle = 90))
+
+dots_cfr_agegroup + dots_cfr_sex
+
+```
+
+
+```{r case fatality rate age}
+## cases fatality rate by  age group
+cfr_age_group<-data_linelist %>%
+  filter(outcome_patcourse_status %in% c('Cured',"Died",'Sent back home')) %>% 
+  case_fatality_rate_df(deaths = DIED, group = `Age 7gp`, mergeCI = TRUE, add_total = TRUE) %>%
+  #tidyr::complete(`Age 7gp`, 
+                  #fill = list(deaths = 0, 
+                              #population = 0, 
+                              #cfr = 0, 
+                              #ci = 0)) %>% # Ensure all levels are represented
+  rename("Age group" = `Age 7gp`, 
+         "Deaths" = deaths, 
+         "Cases" = population, 
+         "CFR (%)" = cfr, 
+         "95%CI" = ci) %>% 
+  knitr::kable(digits = 1,caption="Table : Cases fatality rate of admmitted COVID-19 patients stratified by age group between Jan 2020 to Dec 2021")
+```
+
+The mortality rate increases with age, with an increase from 2.1% (95% CI 1.31–3.41) among those under 18 years to 15.4% (95% CI 14.83–16.00) in those over 60 years. The highest mortality rate was in the middle east and north Africa countries 21.1% (95% CI 18.95–23.44).
+
+```{r cfr_age_group}
+#cfr_age_group
+```
+
+<!-----------Median age of patients fro out come---------->
+
+```{r Median age of patients admitted by outcome and continenet}
+## drop Europe and central asia as we don,t have moralities reported 
+data_linelist_o<-data_linelist %>% 
+  filter(Continent%in%c("Middle East & North Africa", "South Asia","Latin America & Caribbean","Sub Saharan Africa"))
+
+# tabulate the median age of outcome for each outcome
+data_linelist_died <- data_linelist_o %>% filter(ind_outcome_patcourse_status=="Died") %>% dplyr::select(Continent, age_in_years) %>% tbl_summary(missing='no',label= age_in_years~"Died age",by=Continent,statistic = all_continuous()~c("{median}[{p25}-{p75}]"))
+
+data_linelist_cured <- data_linelist_o %>% filter(ind_outcome_patcourse_status=="Cured") %>% dplyr::select(Continent, age_in_years) %>% tbl_summary(missing='no',label= age_in_years~"cured age",by=Continent,statistic = all_continuous()~c("{median}[{p25}-{p75}]"))
+
+data_linelist_sent <- data_linelist_o %>% filter(ind_outcome_patcourse_status=="Sent back home") %>% dplyr::select(Continent, age_in_years) %>% tbl_summary(missing='no',label= age_in_years~"Send Home age",by=Continent,statistic = all_continuous()~c("{median}[{p25}-{p75}]"))
+
+data_linelist_Left <- data_linelist_o %>% filter(ind_outcome_patcourse_status=="Left against medical advice") %>% dplyr::select(Continent, age_in_years) %>% tbl_summary(missing='no',label= age_in_years~"left age",by=Continent,statistic = all_continuous()~c("{median}[{p25}-{p75}]"))
+
+data_linelist_other<- data_linelist_o %>% filter(ind_outcome_patcourse_status=="Other") %>% dplyr::select(Continent, age_in_years) %>% tbl_summary(missing='no',label= age_in_years~"Other age",by=Continent,statistic = all_continuous()~c("{median}[{p25}-{p75}]"))
+
+data_linelist_pend <- data_linelist_o %>% filter(ind_outcome_patcourse_status=="(Pending/Unknown)") %>% dplyr::select(Continent, age_in_years) %>%tbl_summary(missing='no',label= age_in_years~"Pending/Unknown age",by=Continent,statistic = all_continuous()~c("{median}[{p25}-{p75}]"))
+
+age_outcome_continent<-tbl_stack(list(data_linelist_cured,data_linelist_died,data_linelist_sent,data_linelist_Left,data_linelist_other,data_linelist_pend)) %>% modify_caption("Table: Median age for outcome of patients by continenet between Jan 2020 to Dec 2021") 
+
+#age_outcome_continent
+##---  --- ---  --- ---  --- ---  --- ---  --- ---  --- ---  --- ---  --- --- ---##
+## Combined median age for outcome
+data_linelist_died_alone <- data_linelist_o %>% filter(ind_outcome_patcourse_status=="Died") %>% dplyr::select(age_in_years) %>% 
+tbl_summary(missing='no',label= age_in_years~"Died age",statistic = all_continuous()~c("{median}[{p25}-{p75}]"))
+
+data_linelist_cured_alone <- data_linelist_o %>% filter(ind_outcome_patcourse_status=="Cured") %>% dplyr::select( age_in_years) %>% 
+tbl_summary(missing='no',label= age_in_years~"cured age",statistic = all_continuous()~c("{median}[{p25}-{p75}]"))
+
+data_linelist_sent_alone <- data_linelist_o %>% filter(ind_outcome_patcourse_status=="Sent back home") %>% dplyr::select( age_in_years) %>% 
+tbl_summary(missing='no',label= age_in_years~"Send Home age",statistic = all_continuous()~c("{median}[{p25}-{p75}]"))
+
+data_linelist_Left_alone <- data_linelist_o %>% filter(ind_outcome_patcourse_status=="Left against medical advice") %>% dplyr::select( age_in_years) %>% tbl_summary(missing='no',label= age_in_years~"left age",statistic = all_continuous()~c("{median}[{p25}-{p75}]"))
+
+data_linelist_other_alone<- data_linelist_o %>% filter(ind_outcome_patcourse_status=="Other") %>% dplyr::select( age_in_years) %>% 
+tbl_summary(missing='no',label= age_in_years~"Other age",statistic = all_continuous()~c("{median}[{p25}-{p75}]"))
+
+data_linelist_pend_alone <- data_linelist_o %>% filter(ind_outcome_patcourse_status=="(Pending/Unknown)") %>% dplyr::select( age_in_years) %>%
+tbl_summary(missing='no',label= age_in_years~"Pending/Unknown age",statistic = all_continuous()~c("{median}[{p25}-{p75}]"))
+
+median_outcome_continent<-tbl_stack(list(data_linelist_died_alone,data_linelist_cured_alone,data_linelist_sent_alone,data_linelist_Left_alone,data_linelist_other_alone,data_linelist_pend_alone ))
+
+#median_outcome_continent
+
+median_age_merge<-tbl_merge(list(age_outcome_continent,median_outcome_continent), 
+  tab_spanner=c("**Median age of outcome by continent**","**Overall median age by outcome**"))
+median_age_merge
+#median_age_merge  %>%  as_flex_table() %>% 
+#set_table_properties(width = 1, layout = "autofit") %>%  ## this will give immediate word print instead of knitting and table can be copy and pasted
+  #print(preview = "docx") 
+
+```
+
+<!---------Case fatality rate by continent---->
+
+```{r cases fatality by continent}
+## cases fatality rate by continent
+cfr_continent<- data_linelist %>%
+  filter(outcome_patcourse_status %in% c('Cured',"Died",'Sent back home')) %>% 
+  case_fatality_rate_df(deaths = DIED, group = Continent, mergeCI = TRUE, add_total = TRUE) %>%
+  #tidyr::complete(`Age 7gp`, 
+                  #fill = list(deaths = 0, 
+                              #population = 0, 
+                              #cfr = 0, 
+                              #ci = 0)) %>% # Ensure all levels are represented
+  rename("Continent" = Continent, 
+         "Deaths" = deaths, 
+         "Cases" = population, 
+         "CFR (%)" = cfr, 
+         "95%CI" = ci) %>%
+  knitr::kable(digits = 1, caption="Table. Cases fatality rate of admmitted COVID-19 patients stratified by geographic region") 
+  
+```
+
+<!----- Case fatality rate by country----->
+
+```{r case fatality rate by country,fig.height=7,fig.width=7,ncol=2}
+
+cfr_country<- data_linelist %>%
+  filter(outcome_patcourse_status %in% c('Cured',"Died",'Sent back home')) %>% 
+  case_fatality_rate_df(deaths = DIED, group = Country, mergeCI = TRUE, add_total = TRUE) %>%
+  #tidyr::complete(`Age 7gp`, 
+                  #fill = list(deaths = 0, 
+                              #population = 0, 
+                              #cfr = 0, 
+                              #ci = 0)) %>% # Ensure all levels are represented
+  rename("Country" = Country, 
+         "Deaths" = deaths, 
+         "Cases" = population, 
+         "CFR (%)" = cfr, 
+         "95%CI" = ci) %>%
+  knitr::kable(digits = 1, caption="Table. Cases fatality rate of admmitted COVID-19 patients stratified by countries of inclusion in MSF supported ")
+# cfr_country
+
+```
+
+
+```{r mortality by comorbidity by continent}
+
+mort_comorb_continenet<-data_linelist %>% 
+  filter(outcome_patcourse_status=="Died") %>% 
+  select(`Cardiac diseases`, Hypertension, `Liver diseases`, `Renal diseases`, Diabetes, `Neurological diseases`, Malignancy,Malaria, HIV, Tuberculosis, `Other immune deficiency diseases`,`Other chronic lung diseases`,Measles,  Continent) %>% 
+        tbl_summary(by = Continent, 
+                    missing = "no",
+                    statistic = all_categorical()~c("{n}/{N},({p}%)"),
+                      value = list(`Cardiac diseases`~"Yes",
+                           Hypertension~"Yes",
+                          `Liver diseases`~"Yes",
+                          `Renal diseases`~"Yes",
+                           Diabetes~"Yes", 
+                          `Neurological diseases`~"Yes",
+                           Malignancy~"Yes",
+                           Malaria~"Positive",
+                           HIV~"Yes",
+                          `Other immune deficiency diseases`~"Yes",
+                           Tuberculosis~"Yes",
+                          `Other chronic lung diseases`~"Yes",
+                           Measles~"Yes"),
+             
+             label =list(`Cardiac diseases`~"Cardiac diseases",
+                           Hypertension~"Hypertension",
+                          `Liver diseases`~"Liver diseases",
+                          `Renal diseases`~"Renal diseases",
+                           Diabetes~"Diabetes", 
+                          `Neurological diseases`~"Neurological diseases",
+                           Malignancy~"Malignancy",
+                           Malaria~"Malaria",
+                           HIV~"HIV",
+                           Malaria~"Malaria",
+                          `Other immune deficiency diseases`~"Other immune deficiency diseases",
+                           Tuberculosis~"Tuberculosis",
+                          `Other chronic lung diseases`~"Other chronic lung diseases",
+                           Measles~"Measles")) %>% 
+  bold_labels() %>% 
+  add_n() %>% 
+  add_overall(last=T) %>% 
+  modify_header(label ~ "**Variables**") %>%
+  bold_labels() %>% 
+modify_caption("Table: Mortality of confirmed admitted COVID-19 cases treated in MSF supported health facilities between Jan 2020 and Dec 2021, by disease comorbidity and continenet") %>% 
+modify_footnote(all_stat_cols()~"n reresents cases with condition") 
+# modify_footnote(c(all_stat_cols(), p.value) ~ NA) # Remove the foot notes
+  theme_gtsummary_compact()
+  theme_gtsummary_journal(journal = "jama", set_theme = TRUE)
+  
+mort_comorb_continenet
+#mort_comorb_continent  %>%  as_flex_table() %>% 
+#set_table_properties(width = 1, layout = "autofit") %>%  ## this will give immediate word print instead of knitting and table can be copy and pasted
+  #print(preview = "docx") 
+```
+
+The disease comorbidities associated with the highest mortality rates were cardiac disease, hypertension and diabetes, at 1050(57%), 905(54%)  and 756(42%) respectively. The highest mortality associated with cardiac disease was seen in the MENA and LAC regions 802(63%) and 108(46%) respectively while the mortality rate associated with hypertension were higher in SA and the MENA region which was 19(70%) and 682(60%). 
+
+Among patients admitted to ICU, the highest mortality was in the MENA region countries 69.6, 95% CI Of	(67.22--71.99) followed by LAC and SA regions 56.3, 95% CI of (47.33--64.88) and 55.5, 95% CI of (26.67--81.12) respectively. The ICU death in SSA countries was low (32.8 95% CI of (28.94--36.96)).
+
+The case fatality rate among patients treated with oxygen was 30.4, 95% CI of	(28.77--32.25) in the MENA, 33.1, 95% CI of	(29.90--36.59) in the SSA and 26.1 95% CI of (22.57--30.07) in the LAC countries. Case fatality rate among patients who received oxygen in SA was 9.0, 95% CO of	(6.82--11.80). 
+
+Among patients requiring ventilation, CFR in the MENA region was 70.5, 95% CI of 	(67.92--72.99), 49.4, 95% CI of	(39.41--59.54) in SSA, 45.6, 95% CI of	(32.15--59.82) in the LAC, and 21.5 95% CI of	(15.56--29.14) in the SA region countries.
+
+```{r cfr by tratment type}
+#cfr_icu
+
+mortality_icu<-data_linelist %>% 
+ #filter(Continent=="Sub Saharan Africa") %>%
+select(merge_icu, DIED, Continent) %>% 
+  filter(merge_icu=="Yes") %>% 
+  case_fatality_rate_df(deaths = DIED, group =Continent, mergeCI = TRUE)
+
+#Cfr_oxygen
+
+mortality_oxygen<-data_linelist %>% 
+ #filter(Continent=="Sub Saharan Africa") %>%
+select(merge_oxygen, DIED, Continent) %>% 
+  filter(merge_oxygen=="Yes") %>% 
+  case_fatality_rate_df(deaths = DIED, group =Continent, mergeCI = TRUE)
+
+#cfr_ventilation
+
+mortality_ventilated<-data_linelist %>% 
+ #filter(Continent=="Sub Saharan Africa") %>%
+select(merge_vent, DIED, Continent) %>% 
+  filter(merge_vent=="Yes") %>% 
+  case_fatality_rate_df(deaths = DIED, group =Continent, mergeCI = TRUE)
+
+# combination of treatments 
+
+
+```
+
+Lowest case fatality rate was reported from Europe and central Asia `r data_linelist %>%case_fatality_rate_df(deaths = DIED, group = Continent, mergeCI = TRUE, add_total = TRUE) %>% filter(Continent=="Europe & Central Asia") %>%  pull(cfr)` 95% CI of `r data_linelist %>%case_fatality_rate_df(deaths = DIED, group = Continent, mergeCI = TRUE, add_total = TRUE) %>% filter(Continent=="Europe & Central Asia") %>%  pull(ci)`  and highest mortality rate from middle east and north Africa `r data_linelist%>% case_fatality_rate_df(deaths = DIED, group = Continent, mergeCI = TRUE, add_total = TRUE) %>% filter(Continent=="Middle East & North Africa") %>%  pull(cfr)` 95% CI of  `r data_linelist %>%case_fatality_rate_df(deaths = DIED, group = Continent, mergeCI = TRUE, add_total = TRUE)%>% filter(Continent=="Middle East & North Africa") %>%  pull(ci)`.
+
+```{r table mortality continenet}
+cfr_continent
+```
+
+Countries with higher case fatality rate were Syria `r data_linelist %>%case_fatality_rate_df(deaths = DIED, group = Country, mergeCI = TRUE, add_total = TRUE) %>% filter(Country=="Syria") %>%  pull(cfr)` 95% CI of `r data_linelist %>%case_fatality_rate_df(deaths = DIED, group = Country, mergeCI = TRUE, add_total = TRUE) %>% filter(Country=="Syria") %>%  pull(ci)`, Yemen `r data_linelist %>%case_fatality_rate_df(deaths = DIED, group = Country, mergeCI = TRUE, add_total = TRUE) %>% filter(Country=="Yemen") %>%  pull(cfr)` 95% CI of `r data_linelist %>%case_fatality_rate_df(deaths = DIED, group = Country, mergeCI = TRUE, add_total = TRUE) %>% filter(Country=="Yemen") %>%  pull(ci)`, Venezuela `r data_linelist %>%case_fatality_rate_df(deaths = DIED, group = Country, mergeCI = TRUE, add_total = TRUE) %>% filter(Country=="Venezuela") %>%  pull(cfr)` 95% CI of `r data_linelist %>%case_fatality_rate_df(deaths = DIED, group = Country, mergeCI = TRUE, add_total = TRUE) %>% filter(Country=="Venezuela") %>%  pull(ci)`, Iraq `r data_linelist %>%case_fatality_rate_df(deaths = DIED, group = Country, mergeCI = TRUE, add_total = TRUE) %>% filter(Country=="Iraq") %>%  pull(cfr)` 95% CI of `r data_linelist %>%case_fatality_rate_df(deaths = DIED, group = Country, mergeCI = TRUE, add_total = TRUE) %>% filter(Country=="Iraq") %>%  pull(ci)`, Kenya `r data_linelist %>%case_fatality_rate_df(deaths = DIED, group = Country, mergeCI = TRUE, add_total = TRUE) %>% filter(Country=="Kenya") %>%  pull(cfr)` 95% CI of `r data_linelist %>%case_fatality_rate_df(deaths = DIED, group = Country, mergeCI = TRUE, add_total = TRUE) %>% filter(Country=="Kenya") %>%  pull(ci)` Mali `r data_linelist %>%case_fatality_rate_df(deaths = DIED, group = Country, mergeCI = TRUE, add_total = TRUE) %>% filter(Country=="Mali") %>%  pull(cfr)` 95% CI of `r data_linelist %>%case_fatality_rate_df(deaths = DIED, group = Country, mergeCI = TRUE, add_total = TRUE) %>% filter(Country=="Mali") %>%  pull(ci)` Uganda `r data_linelist %>%case_fatality_rate_df(deaths = DIED, group = Country, mergeCI = TRUE, add_total = TRUE) %>% filter(Country=="Uganda") %>%  pull(cfr)` 95% CI of `r data_linelist %>%case_fatality_rate_df(deaths = DIED, group = Country, mergeCI = TRUE, add_total = TRUE) %>% filter(Country=="Uganda") %>%  pull(ci)` and South sudan `r data_linelist %>%case_fatality_rate_df(deaths = DIED, group = Country, mergeCI = TRUE, add_total = TRUE) %>% filter(Country=="South Sudan") %>%  pull(cfr)` 95% CI of `r data_linelist %>%case_fatality_rate_df(deaths = DIED, group = Country, mergeCI = TRUE, add_total = TRUE) %>% filter(Country=="South Sudan") %>%  pull(ci)`.
+
+```{r plot cfr by country}
+df_severity_country <- data_linelist %>% 
+  filter(ind_MSF_covid_status == "Confirmed") %>% 
+  group_by(Country) %>% 
+  summarize(
+    n = n(),
+    n_hosp = sum(merge_admit == "Yes", na.rm = TRUE),
+    n_hosp_known = sum(merge_admit %in% c("Yes", "No"), na.rm = TRUE),
+    p_hosp = n_hosp / n_hosp_known,
+    p_hosp_low95 = as.numeric(binom.test(n_hosp, n_hosp_known)$conf.int)[1],
+    p_hosp_upp95 = as.numeric(binom.test(n_hosp, n_hosp_known)$conf.int)[2],
+    n_died = sum(ind_outcome_patcourse_status == "Died" &
+                   merge_admit == "Yes", na.rm = TRUE),
+    n_died_known = sum(ind_outcome_patcourse_status %in% c("Died", "Cured", 'Sent back home') & merge_admit == "Yes", na.rm = TRUE),
+    p_died_low95 = as.numeric((binom.test(n_died, n_died_known)$conf.int)*100,.1)[1],
+    p_died_upp95 = as.numeric((binom.test(n_died, n_died_known)$conf.int)*100,.1)[2],
+    p_died = rounder((n_died / n_died_known)*100,.1),
+     hosp_lab = paste0("(", n_hosp_known, ")"),
+    # died_lab = paste0("(", n_died_known, ")"),
+    #hosp_lab = paste0("(", n_hosp_known, ")"),
+    died_lab = p_died
+    #hosp_lab = paste0("(", n_hosp, "/", n_hosp_known, ")"),
+    #died_lab = paste0("(", n_died, "/", n_died_known, ")")
+  ) %>% 
+  ungroup() 
+
+dots_cfr_country <- ggplot(df_severity_country, aes(x = Country)) +
+  geom_point(aes(y = p_died), size = 2,color='red1') +
+  geom_errorbar(aes(ymin = p_died_low95, ymax = p_died_upp95)) +
+  #facet_wrap(~Continent, ncol = 2, scales = "free_x") +
+  geom_text(aes(label = died_lab, y = p_died_upp95 + 0.02), size = 3) +
+  scale_y_continuous(breaks = seq(0, 1, 0.2), limits = c(0, 1), labels = scales::percent_format(accuracy = 1)) + 
+  labs(x = "country",
+       y = "CFR", 
+       caption = "Case fatality rate of confirmed patients admitted to MSF supported health facilities between Jan 2020 to Dec 2021")+
+  theme(axis.text.x = element_text(angle = 90))
+
+#dots_cfr_country
+
+
+## bar plot of p died 
+ggplot(df_severity_country, aes(x=Country, y=p_died)) + 
+  geom_bar(stat="identity", color="black",
+           position=position_dodge(.9)) +
+  geom_errorbar(aes(ymin=p_died_low95, ymax=p_died_upp95), width=.2,color='red1'
+                 )+ 
+
+labs(title="Case fatality rate of confirmed patients admitted to MSF supported health facilities \nbetween Jan 2020 to Dec 2021",
+     x="Country", 
+     y = "Case fatality rate (CFR %)")+
+   theme(axis.text.x = element_text(angle = 90)) +
+   scale_fill_manual(values=c('#999999'))
+```
+
+
+```{r case fatality rate by age diseases comorbidities and other risk factors}
+
+## case fatality rate per disease co-morbididties per region 
+mortality_cardi<-data_linelist %>% 
+select(`Cardiac diseases`, DIED, Continent) %>% 
+  filter(`Cardiac diseases`=="Yes") %>% 
+  case_fatality_rate_df(deaths = DIED, group =Continent, mergeCI = TRUE,add_total = TRUE,digits=1) %>% 
+  rename("Continent" = `Continent`, 
+         "Deaths" = deaths, 
+         "Cases" = population, 
+         "CFR (%)" = cfr, 
+         "95%CI" = ci) %>% 
+  knitr::kable(digits = 1, caption = "")
+
+## Hypertension CFR per geographic region
+mortality_htn<-data_linelist %>% 
+select(`Hypertension`, DIED, Continent) %>% 
+  filter(`Hypertension`=="Yes") %>% 
+  case_fatality_rate_df(deaths = DIED, group =Continent, mergeCI = TRUE,add_total = TRUE)
+
+## CFR DM
+mortality_dm<-data_linelist %>% 
+select(`Diabetes`, DIED, Continent) %>% 
+  filter(`Diabetes`=="Yes") %>% 
+  case_fatality_rate_df(deaths = DIED, group =Continent, mergeCI = TRUE,add_total = TRUE)
+
+## Obesity 
+mortality_ob<-data_linelist %>% 
+select(`Obesity`, DIED, Continent) %>% 
+  filter(`Obesity`=="Yes") %>% 
+  case_fatality_rate_df(deaths = DIED, group =Continent, mergeCI = TRUE,add_total = TRUE)
+
+## Renal diseases
+
+mortality_ren<-data_linelist %>% 
+select(`Renal diseases`, DIED, Continent) %>% 
+  filter(`Renal diseases`=="Yes") %>% 
+  case_fatality_rate_df(deaths = DIED, group =Continent, mergeCI = TRUE,add_total = TRUE)
+
+## Liver diseases
+mortality_liver<-data_linelist %>% 
+  select(`Liver diseases`, DIED, Continent) %>% 
+  filter(`Liver diseases`=="Yes") %>% 
+  case_fatality_rate_df(deaths = DIED, group =Continent, mergeCI = TRUE,add_total = TRUE) 
+
+## Death Neuro 
+mortality_neuro<-data_linelist %>% 
+   select(`Neurological diseases`, DIED, Continent) %>% 
+  filter(`Neurological diseases`=="Yes") %>% 
+  case_fatality_rate_df(deaths = DIED, group =Continent, mergeCI = TRUE,add_total = TRUE) 
+
+## Malignancy
+mortality_malig<-data_linelist %>% 
+   select(`Malignancy`, DIED, Continent) %>% 
+  filter(`Malignancy`=="Yes") %>% 
+  case_fatality_rate_df(deaths = DIED, group =Continent, mergeCI = TRUE,add_total = TRUE) 
+
+## Malaria
+mortality_malaria<-data_linelist %>% 
+  select(Malaria, DIED, Continent) %>% 
+  filter(Malaria=="Yes") %>% 
+  case_fatality_rate_df(deaths = DIED, group =Continent, mergeCI = TRUE,add_total = TRUE) 
+
+mortality_immuno<-data_linelist %>% 
+   select(`Other immune deficiency diseases`, DIED, Continent) %>% 
+  filter(`Other immune deficiency diseases`=="Yes") %>% 
+  case_fatality_rate_df(deaths = DIED, group =Continent, mergeCI = TRUE,add_total = TRUE) 
+
+mortality_TB<-data_linelist %>% 
+  select(`Tuberculosis`, DIED, Continent) %>% 
+  filter(`Tuberculosis`=="Yes") %>% 
+  case_fatality_rate_df(deaths = DIED, group =Continent, mergeCI = TRUE,add_total = TRUE) 
+
+mortality_clung<-data_linelist %>% 
+   select(`Other chronic lung diseases`, DIED, Continent) %>% 
+  filter(`Other chronic lung diseases`=="Yes") %>% 
+  case_fatality_rate_df(deaths = DIED, group =Continent, mergeCI = TRUE,add_total = TRUE) 
+
+mortality_measles<-data_linelist %>% 
+   select(`Measles`, DIED, Continent) %>% 
+  filter(`Measles`=="Yes") %>% 
+  case_fatality_rate_df(deaths = DIED, group =Continent, mergeCI = TRUE,add_total = TRUE) 
+
+mortality_obesity<-data_linelist %>% 
+ select(`Obesity`, DIED, Continent) %>% 
+  filter(`Obesity`=="Yes") %>% 
+  case_fatality_rate_df(deaths = DIED, group =Continent, mergeCI = TRUE,add_total = TRUE) 
+
+mortality_maln<-data_linelist %>% 
+   select(`Malnutrition`, DIED, Continent) %>% 
+  filter(`Malnutrition`=="Yes") %>% 
+  case_fatality_rate_df(deaths = DIED, group =Continent, mergeCI = TRUE,add_total = TRUE) 
+
+mortality_smok<-data_linelist %>% 
+  select(`Smoking`, DIED, Continent) %>% 
+  filter(`Smoking`=="Yes") %>% 
+  case_fatality_rate_df(deaths = DIED, group =Continent, mergeCI = TRUE,add_total = TRUE) 
+
+```
+
+
+```{r insert casefatality rate  combined comorbidties}
+
+
+
+
+```
+
+
+The case fatality among those who have cardiac disease was 29.2 (95% CI 27.81--30.79), Hypertension 29.8 (95% CI 28.24--31.49), Diabetes 31.3 (95% CI 29.50--33.20), renal diseases 36.1, 95% CI of	(30.89--41.77), Liver diseases  28.2 95% CI	(21.87--35.57), Neurological diseases 30.3 95% CI	(21.76--40.54), Malignancy	30.3, 95% CI (21.76--40.54), Malaria 8.2 (95% CI 4.55--14.55), other immune deficiency diseases 15.0 (95% CI	11.19--20.02), and obesity 46.6 (95% CI 39.13--54.27).
+
+The highest case fatality rates in patients with cardiac comorbidities and hypertension were reported in the LAC countries at 33.6 (95% CI 28.70--38.98) and 34.5 (95% CI 29.42--40.05) respectively. In SA, the case fatality rate among those with hypertension was low at 7.3 (95% CI 4.75--11.17). The highest case fatality rate in those with diabetes and obesity were reported in MENA region at 34.8 (95% CI 32.71--37.13) and 53.3 (95% CI	44.93--61.65) respectively.   
+
+```{r clean outcome difference by different factors}
+
+dta_outcome<-data_linelist %>% 
+  mutate(msf_outcome=case_when(outcome_patcourse_status=="Died"~"Died",
+                                outcome_patcourse_status%in%c("Died","Sent back home")~"Survived",
+                                TRUE~NA_character_))
+
+tab_outcome<-dta_outcome %>% 
+  select(msf_outcome, Fever,Cough, `Sore throat`, Breathlessness,Tiredness,`Abdominal pain`, Aches,  Ansomia,`Chest pain`, `Chest pain`,  Chills,    `Cutaneous signs`, `Diarrhoea`,  `Headache`,  `Loss of taste`, `Nasal congestion`,  `Runny nose`,  Vomiting,`Can spit`,`Cardiac diseases`, Hypertension, `Liver diseases`, `Renal diseases`, Diabetes, `Neurological diseases`, Malignancy,Malaria, HIV, Tuberculosis, `Other immune deficiency diseases`,`Other chronic lung diseases`,Measles,Obesity,ind_MSF_smoking, Malnutrition, `Travel in the past 14 days`,`Visited health care facility`, `Visited traditional healer`,`Participated in mass gathering`,`Contact to case`) %>% 
+  tbl_summary(by=msf_outcome,
+              missing = 'no',
+              value = list(Fever~"Yes",Cough~"Yes",`Sore throat`~"Yes",Breathlessness~"Yes",
+                          Tiredness~"Yes",`Abdominal pain`~"Yes",
+                          Aches~"Yes",Ansomia~"Yes",`Chest pain`~"Yes",Chills~"Yes",
+                          `Cutaneous signs`~"Yes",`Diarrhoea`~"Yes", 
+                         `Diarrhoea`~"Yes", `Headache`~"Yes", 
+                         `Loss of taste`~"Yes",`Nasal congestion`~"Yes", `Runny nose`~"Yes", 
+                          Vomiting~"Yes",`Can spit`~"No",
+                          `Cardiac diseases`~"Yes",
+                           Hypertension~"Yes",
+                          `Liver diseases`~"Yes",
+                          `Renal diseases`~"Yes",
+                           Diabetes~"Yes", 
+                          `Neurological diseases`~"Yes",
+                           Malignancy~"Yes",
+                           Malaria~"Positive",
+                           HIV~"Yes",
+                          `Other immune deficiency diseases`~"Yes",
+                           Tuberculosis~"Yes",
+                          `Other chronic lung diseases`~"Yes",
+                           Measles~"Yes",
+                          Obesity~"Yes",
+                          ind_MSF_smoking~"Yes",
+                          Malnutrition="Yes",
+                          `Travel in the past 14 days`~"Yes",
+                          `Visited health care facility`~"Yes", 
+                            `Visited traditional healer`~"Yes",
+                         `Participated in mass gathering`~"Yes",
+                           `Contact to case`~"Yes"),
+              label=list(Fever~"Fever",Cough~"Cough",`Sore throat`~"Sore throat",
+                                 `Breathlessness`~"Breathlessness",
+                                  Tiredness~"Tiredness", `Abdominal pain`~"Abdominal Pain", 
+                                  Aches~"Aches", Ansomia~"Anosmia",
+                                  `Chest pain`~"Chest pain", Chills~"Chills", 
+                               `Cutaneous signs`~"Cutaneous signs", `Diarrhoea`~"Diarrhoea", 
+                              `Headache`~"Headache",`Loss of taste`~"Loss of taste",
+                             `Nasal congestion`~" Nasal congestion", 
+                             `Runny nose`~"Runny nose", Vomiting~"Vomiting",`Can spit`~"Can Spit",
+                            `Cardiac diseases`~"Cardiac diseases",
+                           Hypertension~"Hypertension",
+                          `Liver diseases`~"Liver diseases",
+                          `Renal diseases`~"Renal diseases",
+                           Diabetes~"Diabetes", 
+                          `Neurological diseases`~"Neurological diseases",
+                           Malignancy~"Malignancy",
+                           Malaria~"Malaria",
+                           HIV~"HIV",
+                           Malaria~"Malaria",
+                          `Other immune deficiency diseases`~"Other immune deficiency diseases",
+                           Tuberculosis~"Tuberculosis",
+                          `Other chronic lung diseases`~"Other chronic lung diseases",
+                           Measles~"Measles",
+                           Obesity~"Obesity",
+                           ind_MSF_smoking~"Smoking",
+                           Malnutrition~"Malnutrition",
+                          `Travel in the past 14 days`~"Travel in the past 14 days",
+                          `Visited health care facility`~"Visited health facility", 
+                          `Visited traditional healer`~"Visited traditional healer",
+                          `Participated in mass gathering`~"Participated in mass gathering",
+                          `Contact to case`~"Contact to case" )) %>% 
+  bold_labels() %>% 
+  add_p() %>% 
+  add_n() %>% 
+  bold_labels() %>% 
+  modify_caption("Table: Chisquare test of variables against the died and survived patients of COVID-19 cases admitted to MSF health facilities between Jan 2020 to Dec 2021") 
+#modify_footnote(all_stat_cols()~"n represents cases with condition") 
+# modify_footnote(c(all_stat_cols(), p.value) ~ NA) # Remove the foot notes
+  theme_gtsummary_compact()
+  theme_gtsummary_journal(journal = "jama", set_theme = TRUE)
+
+ tab_outcome
+ #tab_outcome  %>%  as_flex_table() %>% 
+#set_table_properties(width = 1, layout = "autofit") %>%  ## this will give immediate word print instead of knitting and table can be copy and pasted
+  #print(preview = "docx") 
+```
+
+
+\newpage
+
+# Regression analysis
+
+
+
+
+ 
+```{r regression tables}
+
+```
+
+\newpage
+
+# Discussion
+
+This analysis of a large global data set of COVID-19 cases, provides a unique insight into how the pandemic unfolded in humanitarian and low resource settings, where the baseline health needs of the population and their access to healthcare was already challenging.  Inclusion of data solely from MSF supported health facilities, means that data are not representative for each country or region, rather they reflect the situation on the ground in the locations that MSF is actively operating. The  WHO case definitions were used as the basis of data collection and the international MSF linelist, designed to include variables predefined by the WHO and CDC, was adapted to reflect changes in the case definitions as the pandemic evolved [@world2020].  
+
+However, the application of WHO case definitions may have varied by project, based on capacity and access to testing. There were a total of `r nrow(dta_linelist)` COVID-19 related consultations but the number of confirmed patients was 33,093(16%) cases. In many projects with limited access to testing, particularly during the initial phase of the outbreak, most suspected and probable cases were not tested. This might have lowered the number of confirmed COVID-19 cases in many of the projects in different countries. Therefore, positivity rates of testing across different contexts or over time have little comparative value. Patient volumes, variations in triage systems in different projects and modifications of case definition for testing by local Ministries of Health, are all likely to have impacted testing practices. Overall, case definitions used locally were aligned with those published by the WHO and therefore the data was considered acceptable for analysis.
+
+From Jan 2020 to Dec 2021, 34 out of the 41 countries where MSF has supported the pandemic response, had COVID-19 patients admitted into health facilities. There were a total of `r nrow(data_linelist)` confirmed admitted COVID-19 patients in these countries, which forms the basis of this analysis. However, access to testing may have affected these numbers as cases in facilities with limited access to  testing, would remain classified as suspected or probable cases. Furthermore differences in admission criteria in a country during different waves of the pandemic, or variations between countries, can distort these numbers.  Among the confirmed admitted patients included in this analysis, 7,172(47%) of the cases were mild cases, 2,974(20%) were moderate cases, 3,666(24%) were severe cases and 1,299(8.6%) were critical cases. Varied clinical practices were observed, where in (EXAMPLE) some countries all suspected and confirmed COVID cases were admitted to isolation facilities regardless of severity particularly during the initial phase of the pandemic, while in others mild cases were sent back home for home based isolation and follow up.
+
+Most of the cases were from Syria `r inline_text(Cases_country,variable='Country',level='Syria', column='stat_0')`, Yemen `r inline_text(Cases_country,variable='Country',level='Yemen')` and Iraq `r inline_text(Cases_country,variable='Country',level='Iraq')`. MSF has a significant presence in Syria and Yemen, due to the humanitarian situations there, and in Iraq MSF operated multiple COVID-19 facilities. 
+* context discussion Syria, Yemen and Iraq in middle east...
+
+Of all admitted patients, males represented 8,685(58%) cases whilst females represented 6,309(42%)cases, this is inline with the evidence from many other countries[@peckham2020;@kragholm2021]. The median age of admitted patients  was 48[IQR 32-63] years. There was no sex difference in the age profile of patients admitted, however, the median age of admitted patients was noted to be higher in the Latin America and the Caribbean region. Studies have shown variations in the median age with a study from Germany reporting a higher median age of admission for their cohort[@karagiannidis2020] with another from Europe reporting a median age similar to that seen inthis analysis [@ciceri2020]. 
+
+Breathlessness, fever and cough were the commonest symptoms reported across all the countries. This is in line with the established literature, where fatigue/tiredness was also among the most common clinical presentations [@giri2021comparison;@mizrahi2020longitudinal].
+
+The most common co-morbidities in this study were cardiac diseases, hypertension and diabetes across all the geographic regions. 
+
+The case fatality rate of COVID-19 has shown slight variations from the beginning of the pandemic to the later phase with slight decrease in most of the countries [@Caoe043560]. The overall CFR observed in this analysis was 24.1	(23.24–24.97) across all the inpatients. However, there was a significant variation in the CFR across the geographic regions from 6.9 (5.35–8.89) in the SA region  to 32.3	(30.98–33.72) in the MENA countries. The high CFR in this study might be attributable to the contexts in which this data was collected, where access to even oxygen therapy can be challenging, testing might have been rationed for only those worst off. In addition, Many of the cases were reported as probable cases and suspect which was due to lack of testing in most of the projects.However, many modeling analysis have also shown the over all reported COVID-19 mortality was less then the actual deaths bu lacked reporting [@wang2022estimating].
+
+The median age of died patients in this analysis was 64[54-72] years which.Study in new York city has shown median age of mortality 71 years with IQR of (60-89) years old[@kalyanaraman2020].
+
+
+### Risk factors for COVID-19 mortality 
+In this analysis,sex male(AOR=2.2;95% CI of 1.64-2.96),Age group 70-79 (AOR=5.47;95% CI:1.43-36.2) and 80+ (AOR=7.32:95% CI:1.89-49.3) Fever(AOR=3.94,95%CI:2.34-6.9),Cough (AOR=3.39,95% CI: 1.9-6.3), Breathlessness (AOR=2.12,95% CI:1.2-4.2),Renal diseases (AOR=2.66,95%CI:1.3-5.5) were factors significantly associated with poor outcome. However the longer the date of stay in hospital has shown better outcome compared to the patients who have been in admission for less than three days.
+
+studies in SSA (Ethiopia) has revealed factors related to poor treatment outcome including Chronic pulmonary disease (AOR=5.62; 95% CI: 2.49–12.70), asthma (AOR=2.7; 95% CI: 1.17–6.67), CKD (AOR=4.81; 95% CI: 1.27–18.22),diabetic mellitus (AOR 2.27; 95% CI: 1.02–5.09), HIV positive (AOR=10.4; 95% CI: 3.0–36.35),  and age 55 and above years (4.35, 95% CI: 1.30–14.60) [@Kaso2022]. 
+
+
+\newpage
+
+# Conclusion
+
+
+\newpage
+
+# Recomendations
+*Prevalence ratio analysis may be more meaningful than regression analysis due to high number of missing values for each of the variables of interest.
+
+
+```{r references}
+
+```
+
+\newpage
+
+# References
+
+
+
+ <div id="refs"></div>
+
+
+
+```{r annex tables}
+
+```
+
+\newpage
+
+# Annex tables 
+
+### COVID-19 confirmed patients by Geographic area:
+
+```{r age group versus geographic areas}
+
+Age_groupsocio<-data_linelist %>% 
+select(`Age 7gp`,sex, Continent) 
+
+Age_groupsocio %>% 
+ tbl_summary(by=Continent) %>% 
+  bold_labels() %>% 
+  add_n() %>% 
+  modify_header(label ~ "**Variables**") %>%
+  modify_caption("Sex and age group of confirmed COVID-19 cases stratified by geographic areas") %>% 
+  modify_footnote(all_stat_cols()~"This data referes to COVID-19 cases treated in MSF supported facilities between dec 2020 to dec 2021")
+theme_gtsummary_compact()
+theme_gtsummary_journal(journal = "jama",set_theme = TRUE)
+
+
+```
+
+### Signs and symptoms of confirmed COVID-19 patients by geographic area
+
+
+
+```{r signs and symptoms of cases reported by geographic areas}
+Age_group_signssymptoms<-data_linelist %>% 
+  dplyr::select( Fever, `Abdominal pain`, Aches,  Ansomia,`Breathlessness`,`Chest pain`, `Chest pain`,  Chills,  Cough,  `Cutaneous signs`, `Diarrhoea`,  `Headache`,  `Loss of taste`, `Nasal congestion`,  `Runny nose`,  `Sore throat`,Vomiting,  Tiredness, Continent) 
+
+age_signsymptoms<-Age_group_signssymptoms %>% 
+ tbl_summary(by=Continent,
+             missing="no") %>% 
+  bold_labels() %>% 
+  add_n() %>% 
+  modify_header(label ~ "**Variables**") %>%
+  bold_labels() %>% 
+  modify_caption("Signs and symptoms of confirmed COVID-19 cases stratified by geographic areas") %>% 
+modify_footnote(all_stat_cols()~"This data referes to COVID-19 cases treated in MSF supported facilities between dec 2020 to dec 2021")
+theme_gtsummary_compact()
+theme_gtsummary_journal(journal = "jama",set_theme = TRUE)
+
+age_signsymptoms
+
+```
+
+### Co-morbidities startified  by  geographic region
+
+
+```{r comorbidities by geographic areas}
+Age_group_comor<-data_linelist %>% 
+  dplyr::select(`Cardiac diseases`, Hypertension, `Liver diseases`, `Renal diseases`, Diabetes, `Neurological diseases`, Malignancy, Malaria, HIV, `Other immune deficiency diseases`,Tuberculosis,`Other chronic lung diseases`,Measles, Continent) 
+
+Age_group_comor<-Age_group_comor %>% 
+ tbl_summary(by=Continent,missing="no") %>% 
+  bold_labels() %>% 
+  add_n() %>% 
+  modify_header(label ~ "**Variables**") %>%
+  bold_labels() %>% 
+modify_caption("Other disease comorbidities among confirmed COVID-19 cases stratified by geographic areas") %>% 
+modify_footnote(all_stat_cols()~"This data referes to COVID-19 cases treated in MSF supported facilities between Jan 2020 to Dec 2021")
+  theme_gtsummary_compact()
+  theme_gtsummary_journal(journal = "jama", set_theme = TRUE)
+Age_group_comor
+```
+
+### Risk factors for aquiring infection and severity of the diseases by geographic region 
+
+
+```{r age group versus risk factors for COVID by geographic areas }
+Age_group_riskfactors<-data_linelist %>% 
+  dplyr::select(
+          Obesity,Smoking, Malnutrition,Occupation, `Travel in the past 14 days`,
+          `Visited health care facility`, `Visited traditional healer`,`Participated in mass gathering`,
+            `Contact setting`, `Contact to case`,Continent) 
+
+Age_group_riskfactors<-Age_group_riskfactors %>% 
+ tbl_summary(by=Continent,missing="no") %>% 
+  bold_labels() %>% 
+  add_n() %>% 
+  modify_header(label ~ "**Variables**") %>%
+  bold_labels() %>% 
+modify_caption("Riskfactors for diseases exposure and diseases severity among confirmed COVID-19 cases stratified by ggeographic areas") %>% 
+modify_footnote(all_stat_cols()~"Data included between January 2020 to December 2021") 
+  theme_gtsummary_compact()
+  theme_gtsummary_journal(journal = "jama", set_theme = TRUE)
+Age_group_riskfactors  
+```
+
+### Outcome of tratement of COVID-19 patients strtified by geographic region
+
+
+
+```{r treatment outcome of patients by geographic region}
+Age_group_rx<-data_linelist %>% 
+  dplyr::select(`Delay between onset and consultation`,`Length of stay in Hospital`,Admitted,`ICU admitted`,`Ventilation therapy`,`Oxygen therapy`,Outcome,Continent) 
+
+Age_group_rx<-Age_group_rx %>% 
+ tbl_summary(by=Continent,missing="no") %>% 
+  bold_labels() %>% 
+  add_n() %>% 
+  modify_header(label ~ "**Variables**") %>%
+  bold_labels() %>% 
+modify_caption("Treatment outcome and time to consultation and duration of hospital stay of confirmed COVID-19 cases stratified by geographic areas") %>% 
+modify_footnote(all_stat_cols()~"Data included between January 2020 to December 2021") 
+  theme_gtsummary_compact()
+  theme_gtsummary_journal(journal = "jama", set_theme = TRUE)
+
+  Age_group_rx
+```
+
+### Sex and Prgenacy of confirmed COVID-19 patients
+
+
+```{r Socio demographic characterstics by sex and pregnancy}
+Preg_socio_male_female<-data_linelist %>% 
+  dplyr::select(`Age preg`, Continent, pregnancy,Fever, Cough, `Abdominal pain`, Aches,  Ansomia,`Breathlessness`,`Chest pain`, `Chest pain`,  Chills, `Cutaneous signs`, `Diarrhoea`,  `Headache`,  `Loss of taste`, `Nasal congestion`,  `Runny nose`,  `Sore throat`,Vomiting,  Tiredness, `Cardiac diseases`, Hypertension, `Liver diseases`, `Renal diseases`, Diabetes, `Neurological diseases`, Malignancy, Malaria, HIV, `Other immune deficiency diseases`,Tuberculosis,`Other chronic lung diseases`,Measles,
+
+## other risk factors 
+          Obesity,Smoking, Malnutrition,Occupation, `Travel in the past 14 days`,
+          `Visited health care facility`, `Visited traditional healer`,`Participated in mass gathering`,
+            `Contact setting`, `Contact to case`,`Delay between onset and consultation`,`Length of stay in Hospital`,Admitted,Continent,`ICU admitted`,`Ventilation therapy`,`Oxygen therapy`,Outcome, ) 
+           
+preg<-Preg_socio_male_female %>% 
+ tbl_summary(by=pregnancy,missing="no") %>% 
+  bold_labels() %>% 
+  add_n() %>% 
+  modify_header(label ~ "**Variables**") %>%
+  modify_spanning_header(c("stat_3","stat_4","stat_5") ~ "**Sex Female**") %>% 
+  modify_spanning_header(c("stat_2" ~ "Sex Male")) %>% 
+  modify_spanning_header(c("stat_1"~"Sex vs Preg")) %>% 
+  bold_labels() %>% 
+as_gt() %>% 
+  
+  tab_row_group(label="Treatment and Outcomes",
+                rows =183:215) %>% 
+  
+  tab_row_group(label="Other risk factors",
+                rows = 138:182) %>% 
+  
+  tab_row_group(label="Comorbidities",
+                rows = 81:137) %>% 
+  
+  tab_row_group(label="Signs and Symptoms",
+                rows = 13:80) %>% 
+  
+  tab_row_group(label="Socio-demographics",
+                rows = 1:12
+                  ) %>% 
+   tab_source_note(source_note = "(*) These data were reported from MSF linelist") %>% 
+  tab_options(column_labels.font.weight = 'bold',
+              row_group.font.weight = 'bold',
+              row_group.background.color = "gray",
+              row_group.font.size = "large",
+              data_row.padding = px(1),
+              row_group.padding = px(1),
+              summary_row.padding = px(1)) %>%  
+  tab_header(
+    title = html(paste('Table: Soco demographic and clinical characterstics of COVID-19 confirmed cases startified by pregnancy )', format(date_max_report, "%d %b %Y"))))
+
+gtsave(preg,
+       file.path(path.local, paste0('characterstics by preg', '.png'))) %>%
+  invisible()
+
+```
+
+### Age and gegraphic area of confirmed COVID-19 patients startified by sex and pregnancy 
+
+```{r age group versus pregnacy}
+Preg_socio_male_female<-data_linelist %>% 
+  dplyr::select(`Age preg`,pregnancy, Continent) 
+
+ pp1<-Preg_socio_male_female %>% 
+ tbl_summary(by=pregnancy,missing="no") %>% 
+  bold_labels() %>% 
+  add_n() %>% 
+  modify_header(label ~ "**Variables**") %>%
+  modify_spanning_header(c("stat_3","stat_4","stat_5") ~ "**Sex Female and preg**") %>% 
+  modify_spanning_header(c("stat_2" ~ "**Sex Male**")) %>% 
+  modify_spanning_header(c("stat_1"~"**Sex vs Preg**")) %>% 
+  bold_labels() %>% 
+  modify_header(label ~ "**Variables**") %>%
+  modify_caption("Continenet and age group of confirmed COVID-19 cases stratified by sex and pregnacy") %>% 
+  modify_footnote(all_stat_cols()~"This data referes to COVID-19 cases treated in MSF supported facilities between dec 2020 to dec 2021")
+theme_gtsummary_compact()
+theme_gtsummary_journal(journal = "jama",set_theme = TRUE)
+pp1
+
+ppp1<-pp1 %>% 
+  as_gt()
+gtsave(ppp1,
+       file.path(path.local, paste0('Preg_table_1', '.png'))) %>%
+  invisible()
+
+```
+
+
+### Signs and symptoms of confirmed COVID-19 patients by sex and pregnacy 
+
+
+```{r signs and symptoms of cases reported by pregnancy}
+preg_signssymptoms<-data_linelist %>% 
+  dplyr::select( Fever, `Abdominal pain`, Aches,  Ansomia,`Breathlessness`,`Chest pain`, `Chest pain`,  Chills,  Cough,  `Cutaneous signs`, `Diarrhoea`,  `Headache`,  `Loss of taste`, `Nasal congestion`,  `Runny nose`,  `Sore throat`,Vomiting,  Tiredness, pregnancy) 
+
+pp2<-preg_signssymptoms %>% 
+ tbl_summary(by=pregnancy,missing="no") %>% 
+  bold_labels() %>% 
+  add_n() %>% 
+  modify_header(label ~ "**Variables**") %>%
+  modify_spanning_header(c("stat_3","stat_4","stat_5") ~ "**Sex Female and preg**") %>% 
+  modify_spanning_header(c("stat_2" ~ "**Sex Male**")) %>% 
+  modify_spanning_header(c("stat_1"~"**Sex vs Preg**")) %>% 
+  bold_labels() %>% 
+  modify_header(label ~ "**Variables**") %>%
+  modify_caption("Signs and symptoms of confirmed COVID-19 cases stratified by sex and pregncacy") %>% 
+modify_footnote(all_stat_cols()~"This data referes to COVID-19 cases treated in MSF supported facilities between dec 2020 to dec 2021")
+theme_gtsummary_compact()
+theme_gtsummary_journal(journal = "jama",set_theme = TRUE)
+pp2
+  
+ppp2<-pp2 %>% 
+  as_gt()
+gtsave(ppp2,
+       file.path(path.local, paste0('Preg_tble_2', '.png'))) %>%
+  invisible()  
+ #pp2 %>%  as_flex_table() %>% 
+#set_table_properties(width = 1, layout = "autofit") %>%  ## this will give immediate word print instead of knitting and table can be copy and pasted
+  #print(preview = "docx")
+```
+
+### Co-morbidities of confirmed COVID-19 patients startified  by  sex and pregnancy
+
+```{r comorbidities by pregnanacy}
+preg_comorbidities<-data_linelist %>% 
+  dplyr::select(`Cardiac diseases`, Hypertension, `Liver diseases`, `Renal diseases`, Diabetes, `Neurological diseases`, Malignancy, Malaria, HIV, `Other immune deficiency diseases`,Tuberculosis,`Other chronic lung diseases`,Measles, pregnancy) 
+
+pp3<-preg_comorbidities %>% 
+ tbl_summary(by=pregnancy,missing="no") %>% 
+  bold_labels() %>% 
+  add_n() %>% 
+  modify_header(label ~ "**Variables**") %>%
+  modify_spanning_header(c("stat_3","stat_4","stat_5") ~ "**Sex Female and preg**") %>% 
+  modify_spanning_header(c("stat_2" ~ "**Sex Male**")) %>% 
+  modify_spanning_header(c("stat_1"~"**Sex vs Preg**")) %>% 
+  bold_labels() %>% 
+modify_caption("Other disease comorbidities among confirmed COVID-19 cases stratified by sex and pregnacy") %>% 
+modify_footnote(all_stat_cols()~"Data included between January 2020 to December 2021")
+  theme_gtsummary_compact()
+  theme_gtsummary_journal(journal = "jama", set_theme = TRUE)
+pp3
+  
+  ppp3<-pp3 %>% 
+  as_gt()
+gtsave(ppp3,
+       file.path(path.local, paste0('Preg_tble_3', '.png'))) %>%
+  invisible() 
+```
+
+### Risk factors for aquiring infection and severity of the diseases by sex and pregnancy
+
+
+```{r pregnancy versus risk factors for COVID }
+Age_group_riskfactors<-data_linelist %>% 
+  dplyr::select(Obesity,Smoking, Malnutrition,Occupation, `Travel in the past 14 days`,
+          `Visited health care facility`, `Visited traditional healer`,`Participated in mass gathering`,
+            `Contact setting`, `Contact to case`, pregnancy) 
+
+pp4<-Age_group_riskfactors %>% 
+ tbl_summary(by=pregnancy,missing="no") %>% 
+  bold_labels() %>% 
+  add_n() %>% 
+  modify_header(label ~ "**Variables**") %>%
+  modify_spanning_header(c("stat_3","stat_4","stat_5") ~ "**Sex Female and preg**") %>% 
+  modify_spanning_header(c("stat_2" ~ "**Sex Male**")) %>% 
+  modify_spanning_header(c("stat_1"~"**Sex vs Preg**")) %>% 
+  bold_labels() %>% 
+modify_caption("Riskfactors for diseases exposure and diseases severity among confirmed COVID-19 cases stratified by sex and pregncacy") %>% 
+modify_footnote(all_stat_cols()~"Data included between January 2020 to December 2021, *missing values are excluded") 
+  theme_gtsummary_compact()
+  theme_gtsummary_journal(journal = "jama", set_theme = TRUE)
+  
+  pp4
+  
+  ppp4<-pp4 %>% 
+  as_gt()
+gtsave(ppp4,
+       file.path(path.local, paste0('Preg_tble_4', '.png'))) %>%
+  invisible() 
+  
+```
+
+### Traetment and outcome of COVID-19 patients strtified by sex and pregnancy
+
+```{r treatment outcome of patients by pregnancy}
+preg_rx<-data_linelist %>% 
+  dplyr::select(`Delay between onset and consultation`,`Length of stay in Hospital`,Admitted,`ICU admitted`,`Ventilation therapy`,`Oxygen therapy`,Outcome,pregnancy) 
+
+pp5<-preg_rx %>% 
+ tbl_summary(by=pregnancy,missing="no") %>% 
+  bold_labels() %>% 
+  add_n() %>% 
+  modify_header(label ~ "**Variables**") %>%
+  modify_spanning_header(c("stat_3","stat_4","stat_5") ~ "**Sex Female and preg**") %>% 
+  modify_spanning_header(c("stat_2" ~ "**Sex Male**")) %>% 
+  modify_spanning_header(c("stat_1"~"**Sex vs Preg**")) %>% 
+  bold_labels() %>% 
+modify_caption("Treatment outcome and time to consultation and duration of hospital stay of confirmed COVID-19 cases stratified by geographic areas") %>% 
+modify_footnote(all_stat_cols()~"Data included between January 2020 to December 2021") 
+  theme_gtsummary_compact()
+  theme_gtsummary_journal(journal = "jama", set_theme = TRUE)
+  
+  pp5
+  
+  ppp5<-pp5 %>% 
+  as_gt()
+gtsave(ppp5,
+       file.path(path.local, paste0('Preg_tble_5', '.png'))) %>%
+  invisible() 
+```
+
+## MSF diseases severity: 
+
+
+```{r Severity of patients according to the linelist (Mild, Moderate, Severe and critical)}
+
+Severity<-data_linelist %>% 
+   dplyr::select(`Age group`,sex,Continent, Fever,Cough, `Abdominal pain`, Aches,  Ansomia,`Breathlessness`,`Chest pain`, `Chest pain`,  Chills,    `Cutaneous signs`, `Diarrhoea`,  `Headache`,  `Loss of taste`, `Nasal congestion`,  `Runny nose`,  `Sore throat`,Vomiting,  Tiredness, `Cardiac diseases`, Hypertension, `Liver diseases`, `Renal diseases`, Diabetes, `Neurological diseases`, Malignancy, Malaria, HIV, `Other immune deficiency diseases`,Tuberculosis,`Other chronic lung diseases`,Measles,
+
+## other risk factors 
+          Obesity,Smoking, Malnutrition,Occupation, `Travel in the past 14 days`,
+          `Visited health care facility`, `Visited traditional healer`,`Participated in mass gathering`,
+            `Contact setting`, `Contact to case`,`Delay between onset and consultation`,`Length of stay in Hospital`,Admitted,Continent,`ICU admitted`,`Ventilation therapy`,`Oxygen therapy`,Outcome,MSF_severity )
+
+           
+ss<-Severity %>% 
+ tbl_summary(by=MSF_severity,missing="no") %>% 
+bold_labels() %>% 
+  add_n() %>% 
+  modify_header(label ~ "**Variables**") %>%
+  bold_labels() %>%  
+as_gt() %>% 
+  tab_row_group(label="Treatment and Outcomes",
+                rows = 191:210) %>% 
+  
+  tab_row_group(label="Other risk factors",
+                rows = 146:190) %>% 
+  
+  tab_row_group(label="Comorbidities",
+                rows = 89:145) %>% 
+  
+  tab_row_group(label="Signs and Symptoms",
+                rows = 21:88) %>% 
+  
+  tab_row_group(label="Socio-demographics",
+                rows = 1:20
+                  ) %>%  
+   tab_source_note(source_note = "(*) These data were reported from MSF linelist") %>% 
+  tab_options(column_labels.font.weight = 'bold',
+              row_group.font.weight = 'bold',
+              row_group.background.color = "gray",
+              row_group.font.size = "large",
+              data_row.padding = px(1),
+              row_group.padding = px(1),
+              summary_row.padding = px(1)) %>%  
+  tab_header(
+    title = html(paste('Table: Soco demographic and clinical characterstics of COVID-19 confirmed cases startified by disease severity (Mild, moderate,Severe and critical', format(date_max_report, "%d %b %Y"))))
+
+gtsave(ss,
+       file.path(path.local, paste0('severity long table', '.png'))) %>%
+  invisible() 
+```
+
+# Countries `by geographic region 
+
+```{r countries in each geographic region}
+dta_linelist %>% 
+  dplyr::select(country,Continent) %>% 
+  tbl_summary(by=Continent)
+
+```
+
+

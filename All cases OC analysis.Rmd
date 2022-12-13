@@ -1,0 +1,668 @@
+---
+title: "Confirmed plus other cases"
+author: "Berhe"
+date: '2022-03-09'
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup,include=FALSE,  results='hide', message=FALSE, warning=FALSE}
+## hide all code chunks in the output, but show errors
+knitr::opts_chunk$set(echo = FALSE,       # hide all code chunks in output
+                      error = TRUE,       # show errors if they appear, but don't stop
+                      fig.width = 6*1.25, # Figure width
+                      fig.height = 6,      # Figure height
+                      warning = FALSE,
+                      message = FALSE
+                     )
+## set default NA to - in output, define figure width/height
+options(knitr.kable.NA = "-")
+
+## Installing required packages for this template
+required_packages <- c("knitr",       # create output docs
+                       "here",        # find your files
+                       "janitor",
+                       "dplyr",       # clean/shape data
+                       "forcats",     # clean/shape data
+                       "stringr",     # clean text
+                       "rio",         # read in data
+                       "ggplot2",     # create plots and charts
+                       "patchwork",   # combine plots in one
+                       "linelist",    # Functions for cleaning/standardising data/dates
+                       "matchmaker",  # dictionary-based standardization of variables
+                       "incidence",   # create epicurves
+                       "aweek",       # define epi weeks
+                       "epitrix",     # epi helpers and tricks
+                       "sf",          # encode spatial vector data
+                       "ggspatial",   # plot maps
+                       "mondate",
+                       "xts",         # moving \naverages
+                       "zoo",         # moving \naverages
+                       "classInt",    # specifying breaks for maps
+                       "excel.link",  # opening password protected files
+                       "askpass",     # opening password protected files
+                       "tsibble",     # time series data
+                       "slider",      # time series data
+                       "tidyr",       # long/long adjustments to data
+                       "gt", 
+                       "gtsummary",# make nice tables
+                       "data.table",   # for taking last and first values from data frames
+                       "patchwork",   # combining plots together
+                       "TTR",        # calculate the moving average
+                       "anytime",     # POSIX Date converter
+                       "matrixStats", # standard deviation matrix calculator 
+                       "tmaptools",   # for getting geocoordinates (lon/lat) based on place names
+                       "ISOweek",
+                       "growthrates",
+                       "glue",
+                       "ggplot2",
+                       "scales",
+                       "gridExtra",
+                       "ggpubr",
+                       "grid",
+                       "sandwich",
+                       "rgeos",
+                       "countrycode",
+                       "officer",
+                       "gt",
+                       "webshot",
+                       "english",
+                       "ggthemes",
+                       "purrr",
+                       "readxl",
+                       "readr",
+                       "broom",
+                       "tidyverse",
+                       "lmtest",
+                       "parameters",
+                       "see")
+for (pkg in required_packages) {
+  # install packages if not already present
+  if (!pkg %in% rownames(installed.packages())) {
+    install.packages(pkg)
+  }
+  
+  # load packages to this current session 
+  library(pkg, character.only = TRUE)
+}
+
+
+# Set the left and right censoring for date of consultation. 
+# The right-censoring create also the week value and the folders where to save the outputs
+
+date_min_report <-  as.Date("2020-01-22")
+date_max_report <- as.Date("2021-12-31")
+
+
+palette_Reds4U <- c('#fcae91', '#fb6a4a','#de2d26', '#a50f15', '#969696')
+
+x_date_labels <- "1 months"
+x_date_labels_faceted <- "2 months"
+
+```
+
+
+```{r import functions}
+source(here::here("functions/read_msf_data.R"))
+source(here::here("functions/aaa_get_latest_data.R"))
+source(here::here("functions/aaa_file_name_helpers.R"))
+source(here::here("functions/current_data.R"))
+source(here::here("functions/utils_modelling.R"))
+source(here::here("functions/utils_vis.R"))
+source(here::here("functions/setup.R"))
+```
+
+
+```{r import data set, warning = FALSE, message = FALSE,show_col_types=FALSE}
+### Read in data from work sheet ---------------------------------------------------------------
+#dta_linelist <- rio::import(current_raw_covid_MSF,
+                            #which="Sheet1") 
+#df_labels_comcond <- read_csv(here("./Data/labels_comcond.csv")) 
+#dta_dictionary<-read_excel(here("./data.dictionary.xlsx"))
+dta_linelist <- read_csv("C:/Users/berhe.tesfay/MSF/GRP-EPI-COVID-19 - OCA covid19 research initiative/code/Covid Regression/Data/msf_covid19_linelist_global_2022-03-05.csv")
+
+```
+
+
+```{r clean data}
+## add Continent of the countries according to world bank region
+dta_linelist<-dta_linelist %>% 
+  filter(date_event<=date_max_report) %>% 
+  mutate(Continent=case_when(country%in%c("AFG","BGD","IND","PAK","MMR") ~"South Asia",
+    country%in%c("ETH",
+        "CAF", "BFA","CMR","TCD","COD","GRC",
+        "GIN","KEN","MWI","MLI", "NER","NGA","SDN","SSD","SOM","TZA","UGA")~"Sub Saharan Africa",
+    country%in%c("COL","HTI","HND","MEX","PER","VEN","BRA")~"Latin America & Caribbean",
+    country%in%c("GRC","KGZ","TJK","UKR","BEL","BLR")~"Europe & Central Asia",
+    country%in%c("IRQ","JOR","LBN","SYR","TUN","YEM")~"Middle East & North Africa",
+         TRUE~country)) 
+dta_linelist<-dta_linelist %>% 
+  mutate(country=case_when(country=="AFG"~"Afghanistan",#
+                           country=="BGD"~"Bangladesh",#
+                           country=="IND"~"India",#
+                           country=="PAK"~"Pakistan",#
+                           country=="ETH"~"Ethiopia",#
+                           country=="CAF"~"Central Africa",#
+                           country=="BFA"~"Burkina faso",#
+                           country=="CMR"~"Cameron",#
+                           country=="TCD"~"Chad",#
+                           country=="COD"~"DRC",#
+                           country=="GRC"~"Greece",#
+                           country=="GIN"~"Guniea",#
+                           country=="KEN"~"Kenya",#
+                           country=="MWI"~"Malawi",#
+                           country=="MLI"~"Mali",
+                           country=="NER"~"Niger",
+                           country=="NGA"~"Nigeria",
+                           country=="SDN"~"Sudan",
+                           country=="SSD"~"South Sudan",
+                           country=="SOM"~"Somalia",
+                           country=="TZA"~"Tanzania",
+                           country=="UGA"~"Uganda",
+                           country=="COL"~"Colombia",
+                           country=="HTI"~"Haiti",
+                           country=="HND"~"Honduras",
+                           country=="MEX"~"Mexico",
+                           country=="PER"~"Peru",
+                           country=="VEN"~"Venezuela",
+                           country=="BRA"~"Brazil",
+                           country=="KGZ"~"Kazagistan",
+                           country=="TJK"~"Tajikistan",
+                           country=="UKR"~"Ukraine",
+                           country=="BEL"~"Belgium",#
+                           country=="BLR"~"Belarus",
+                           country=="IRQ"~"Iraq",
+                           country=="JOR"~"Jordan",
+                           country=="LBN"~"Lebanon",
+                           country=="SYR"~"Syria",
+                           country=="TUN"~"Tunisia",
+                           country=="YEM"~"Yemen",
+                           country=="MMR"~"Myanmar"
+                           ))
+
+```
+
+<!------check for duplication of cases by project---->
+
+```{r check for duplication of cases by projects}
+
+
+```
+
+
+```{r covid cases by section}
+tbl_countries_oc_covid_status <- dta_linelist %>%
+  dplyr::select(OC, ind_MSF_covid_status)
+
+tbl_cases_by_section<-tbl_countries_oc_covid_status %>% 
+  tbl_summary(by = ind_MSF_covid_status) %>% 
+  add_n() %>% 
+  bold_labels() %>% 
+  modify_caption("Number of confirmed, probable, suspected, not a cases and unknown covid-19 status of cases in MSF supported health facilities by OC between Januray 2020 and December 31/2021.")
+
+theme_gtsummary_compact()
+theme_gtsummary_journal(journal="jama",set_theme = TRUE)
+
+tbl_cases_by_section
+
+tbl_cases_by_OC<-tbl_cases_by_section %>% 
+  as_gt()
+gtsave(tbl_cases_by_OC,
+       file.path(path.local, paste0('Cases by OCs', '.png'))) %>%
+  invisible()
+```
+
+# Overall Covid-19 cases consulted in MSF supported facilities by country
+
+
+
+```{r cases by country and continnet}
+tbl_countries_covid_status <- dta_linelist %>%
+  select( country, ind_MSF_covid_status) 
+
+tbl_cases_by_country<-tbl_countries_covid_status %>% 
+  tbl_summary(by = ind_MSF_covid_status) %>% 
+  add_n() %>% 
+  bold_labels() %>% 
+  modify_caption("Number of confirmed, probable, suspected, not a cases and unknown covid-19 status of cases in MSF supported health facilities by country between January 2020 and December 31/2021.")
+theme_gtsummary_compact()
+theme_gtsummary_journal(journal="jama",set_theme = TRUE)
+
+tbl_cases_by_country
+
+tbl_cases_by_country<-tbl_cases_by_country %>% 
+  as_gt()
+gtsave(tbl_cases_by_country,
+       file.path(path.local, paste0('Cases by country', '.png'))) %>%
+  invisible()
+
+```
+
+
+```{r cases by project OCA}
+tbl_oca_covid_status <- dta_linelist %>%
+  filter(OC=="OCA") %>% 
+  mutate(`MSF OCA`=country) %>% 
+  select(`MSF OCA`,ind_MSF_covid_status)  
+
+tbl_cases_oca<-tbl_oca_covid_status %>% 
+  tbl_summary(by = ind_MSF_covid_status) %>% 
+  add_n() %>% 
+  bold_labels()  
+
+tbl_cases_OCA<-tbl_cases_oca %>% 
+  as_gt()
+gtsave(tbl_cases_OCA,
+       file.path(path.local, paste0('Cases by country_OCA', '.png'))) %>%
+  invisible()
+################################################################################
+tbl_ocb_covid_status <- dta_linelist %>%
+  filter(OC=="OCB") %>% 
+  mutate(`MSF OCB`=country) %>% 
+  select(`MSF OCB`,ind_MSF_covid_status)
+
+tbl_cases_ocb<-tbl_ocb_covid_status %>% 
+  tbl_summary(by = ind_MSF_covid_status) %>% 
+  add_n() %>% 
+  bold_labels()  
+
+tbl_cases_OCB<-tbl_cases_ocb %>% 
+  as_gt()
+gtsave(tbl_cases_OCB,
+       file.path(path.local, paste0('Cases by country_OCB', '.png'))) %>%
+  invisible()
+###############################################################################
+tbl_ocba_covid_status <- dta_linelist %>%
+  filter(OC=="OCBA") %>% 
+  mutate(`MSF OCBA`=country) %>% 
+  select(`MSF OCBA`,ind_MSF_covid_status)   
+
+tbl_cases_ocba<-tbl_ocba_covid_status %>% 
+  tbl_summary(by = ind_MSF_covid_status) %>% 
+  add_n() %>% 
+  bold_labels() 
+tbl_cases_OCBA<-tbl_cases_ocba %>% 
+  as_gt()
+gtsave(tbl_cases_OCBA,
+       file.path(path.local, paste0('Cases by country_OCBA', '.png'))) %>%
+  invisible()
+###############################################################################
+tbl_ocg_covid_status <- dta_linelist %>%
+  filter(OC=="OCG") %>% 
+  mutate(`MSF OCG`=country) %>% 
+  select(`MSF OCG`,ind_MSF_covid_status)  
+
+tbl_cases_ocg<-tbl_ocg_covid_status %>% 
+  tbl_summary(by = ind_MSF_covid_status) %>% 
+  add_n() %>% 
+  bold_labels()  
+
+tbl_cases_OCG<-tbl_cases_ocg %>% 
+  as_gt()
+gtsave(tbl_cases_OCG,
+       file.path(path.local, paste0('Cases by country_OCG', '.png'))) %>%
+  invisible()
+
+##############################################################################
+tbl_ocp_covid_status <- dta_linelist %>%
+  filter(OC=="OCP") %>% 
+  mutate(`MSF OCP`=country) %>% 
+  select(`MSF OCP`,ind_MSF_covid_status)  
+
+tbl_cases_ocp<-tbl_ocp_covid_status %>% 
+  tbl_summary(by = ind_MSF_covid_status) %>% 
+  add_n() %>% 
+  bold_labels() 
+
+tbl_cases_OCP<-tbl_cases_ocp %>% 
+  as_gt()
+gtsave(tbl_cases_OCP,
+       file.path(path.local, paste0('Cases by country_OCP', '.png'))) %>%
+  invisible()
+################################################################################
+tbl_ocb_p_covid_status <- dta_linelist %>%
+  filter(OC=="OCB/OCP") %>% 
+  mutate(`MSF OCB/P`=country) %>% 
+  select(`MSF OCB/P`,ind_MSF_covid_status)  
+
+tbl_cases_ocb_p<-tbl_ocb_p_covid_status %>% 
+  tbl_summary(by = ind_MSF_covid_status) %>% 
+  add_n() %>% 
+  bold_labels() %>% 
+modify_caption("Number of confirmed, probable, suspected, not a cases and unknown covid-19 status cases in MSF supported health facilities by country between December 2020 and December 31/2021.") %>% 
+  modify_footnote(all_stat_cols()~"This data refers to Covid-19 cases treated in MSF supported facilities between Jan 2020 to Dec 2021")
+
+tbl_cases_OCB_P<-tbl_cases_ocb_p %>% 
+  as_gt()
+gtsave(tbl_cases_OCB_P,
+       file.path(path.local, paste0('Cases by country_OCB/P', '.png'))) %>%
+  invisible()
+
+```
+
+
+
+```{r stack tables}
+ex1 <- tbl_stack(list(tbl_cases_ocb,tbl_cases_oca,tbl_cases_ocp,tbl_cases_ocg,tbl_cases_ocba,tbl_cases_ocb_p))
+ex1
+```
+
+## cases per Project per section
+
+
+
+```{r cases per project}
+tbl_case_per_project_oca <- dta_linelist %>%
+  filter(OC=="OCA") %>% 
+  mutate(`MSF OCA`=site_name) %>% 
+  select(`MSF OCA`,ind_MSF_covid_status)    
+
+tbl_cases_per_project_oca<-tbl_case_per_project_oca %>% 
+  tbl_summary(by = ind_MSF_covid_status) %>% 
+  add_n() %>% 
+  bold_labels() 
+tbl_cases_project_OCA<-tbl_cases_per_project_oca %>% 
+  as_gt()
+gtsave(tbl_cases_project_OCA,
+       file.path(path.local, paste0('Cases by project_OCA', '.png'))) %>%
+  invisible()
+
+#######################################################################################
+tbl_case_per_project_ocb <- dta_linelist %>%
+  filter(OC=="OCB") %>% 
+  mutate(`MSF OCB`=site_name) %>% 
+  select(`MSF OCB`,ind_MSF_covid_status)  
+
+tbl_cases_per_project_ocb<-tbl_case_per_project_ocb %>% 
+  tbl_summary(by = ind_MSF_covid_status) %>% 
+  add_n() %>% 
+  bold_labels() 
+tbl_cases_project_ocb<-tbl_cases_per_project_ocb %>% 
+  as_gt()
+gtsave(tbl_cases_project_ocb,
+       file.path(path.local, paste0('Cases by project_OCB', '.png'))) %>%
+  invisible()
+########################################################################################
+tbl_case_per_project_ocp <- dta_linelist %>%
+  filter(OC=="OCP") %>% 
+ mutate(`MSF OCP`=site_name) %>% 
+  select(`MSF OCP`,ind_MSF_covid_status)  
+
+tbl_cases_per_project_ocp<-tbl_case_per_project_ocp %>% 
+  tbl_summary(by = ind_MSF_covid_status) %>% 
+  add_n() %>% 
+  bold_labels() 
+tbl_cases_project_ocp<-tbl_cases_per_project_ocp %>% 
+  as_gt()
+gtsave(tbl_cases_project_ocp,
+       file.path(path.local, paste0('Cases by project_OCP', '.png'))) %>%
+  invisible()
+
+##########################################################################################
+tbl_case_per_project_ocg <- dta_linelist %>%
+  filter(OC=="OCG") %>% 
+  mutate(`MSF OCG`=site_name) %>% 
+  select(`MSF OCG`,ind_MSF_covid_status)  
+
+tbl_cases_per_project_ocg<-tbl_case_per_project_ocg %>% 
+  tbl_summary(by = ind_MSF_covid_status) %>% 
+  add_n() %>% 
+  bold_labels() 
+tbl_cases_project_ocg<-tbl_cases_per_project_ocg %>% 
+  as_gt()
+gtsave(tbl_cases_project_ocg,
+       file.path(path.local, paste0('Cases by project_OCG', '.png'))) %>%
+  invisible()
+
+########################################################################
+tbl_case_per_project_ocba <- dta_linelist %>%
+  filter(OC=="OCBA") %>% 
+  mutate(`MSF OCBA`=site_name) %>% 
+  select(`MSF OCBA`,ind_MSF_covid_status)  
+
+tbl_cases_per_project_ocba<-tbl_case_per_project_ocba %>% 
+  tbl_summary(by = ind_MSF_covid_status) %>% 
+  add_n() %>% 
+  bold_labels() 
+tbl_cases_project_OCBA<-tbl_cases_per_project_ocba %>% 
+  as_gt()
+gtsave(tbl_cases_project_OCBA,
+       file.path(path.local, paste0('Cases by project_OCBA', '.png'))) %>%
+  invisible()
+#####################################################################
+tbl_case_per_project_ocb_p <- dta_linelist %>%
+  filter(OC=="OCB/OCP") %>% 
+  mutate(`MSF OCB/P`=site_name) %>% 
+  select(`MSF OCB/P`,ind_MSF_covid_status)   
+
+tbl_cases_per_project_ocb_p<-tbl_case_per_project_ocb_p %>% 
+  tbl_summary(by = ind_MSF_covid_status) %>% 
+  add_n() %>% 
+  bold_labels() %>% 
+modify_caption("Number of confirmed, probable, suspected, not a cases and unknown covid-19 status cases in MSF supported health facilities by country between January 2020 and December 31/2021.") %>% 
+  modify_footnote(all_stat_cols()~"This data refers to Covid-19 cases treated in MSF supported facilities between Jan 2020 to Dec 2021")
+
+tbl_cases_project_ocb_p<-tbl_cases_per_project_ocb_p %>% 
+  as_gt()
+gtsave(tbl_cases_project_ocb_p,
+       file.path(path.local, paste0('Cases by project_OCA', '.png'))) %>%
+  invisible()
+
+
+```
+
+
+```{r combined cases per project tables}
+table1 <- tbl_stack(list(tbl_cases_per_project_oca, 
+                         tbl_cases_per_project_ocb,
+                         tbl_cases_per_project_ocp,
+                         tbl_cases_per_project_ocba,
+                         tbl_cases_per_project_ocg,
+                         tbl_cases_per_project_ocb_p))
+
+table1
+
+```
+
+
+```{r cases by country and continent}
+
+tbl_countries_covid_status <- dta_linelist %>%
+  select(Continent, country, site_name, ind_MSF_covid_status) %>%
+  group_by(Continent, country) %>%
+  summarise(
+    total = n(),
+    n_confirmed = sum(ind_MSF_covid_status == 'Confirmed'),
+    n_probable  = sum(ind_MSF_covid_status == 'Probable'),
+    n_suspected = sum(ind_MSF_covid_status == 'Suspected'),
+    n_not_case  = sum(ind_MSF_covid_status == 'Not a case'),
+    n_unknown   = sum(ind_MSF_covid_status == '(Unknown)'),
+    p_confirmed = n_confirmed / total,
+    p_probable  = n_probable  / total,
+    p_suspected = n_suspected / total,
+    p_not_case  = n_not_case  / total,
+    p_unknown   = n_unknown   / total) %>%
+  ungroup() %>%
+  arrange(Continent, country)
+
+tbl_countries_dates <- dta_linelist %>%
+  select(Continent, country, site_name, MSF_date_consultation) %>%
+  group_by(country) %>%
+  summarise(
+    date_adm_first = format(min(MSF_date_consultation, na.rm = TRUE), '%d-%m-%Y'),
+    date_adm_last  = format(max(MSF_date_consultation, na.rm = TRUE), '%d-%m-%Y'))
+
+gtbl_countries_covid_status <- tbl_countries_covid_status %>%
+  gt(rowname_col = "country",
+     groupname_col = "Continent") %>%
+  cols_label(
+    country     = 'Country',
+    total       = 'Total',
+    n_confirmed = 'n',
+    n_probable  = 'n',
+    n_suspected = 'n',
+    n_not_case  = 'n',
+    n_unknown   = 'n',
+    p_confirmed = '(%)',
+    p_probable  = '(%)',
+    p_suspected = '(%)',
+    p_not_case  = '(%)',
+    p_unknown   = '(%)') %>% 
+  tab_spanner(
+    label = html('Confirmed'),
+    columns = ends_with('_confirmed')) %>%
+  tab_spanner(
+    label = html('Probable'),
+    columns = ends_with('_probable')) %>%
+    tab_spanner(
+    label = html('Suspected'),
+    columns = ends_with('_suspected')) %>%
+    tab_spanner(
+    label = html('Not a case'),
+    columns = ends_with('_not_case')) %>%
+  tab_spanner(
+    label = html('(Unknown)'),
+    columns = ends_with('_unknown')) %>%
+  fmt_number(
+    columns = starts_with(c('total', 'n_')),
+    decimals = 0) %>%
+  fmt_number(
+    columns = starts_with('p_'),
+    decimals = 1,
+    scale_by = 100,
+    pattern = "({x})") %>%
+  fmt_missing(
+    columns = starts_with('date_adm_'),
+    missing_text = '(Unknown)') %>%
+  cols_align(
+    align = 'right',
+    columns = starts_with(c('total', 'n_'))) %>%
+  cols_align(
+    align = 'left',
+    columns = starts_with('p_')) %>%
+  cols_align(
+    align = 'center',
+    columns = starts_with('date_adm_')) %>%
+  tab_style(
+    style = list(
+      cell_text(align = 'right')),
+    locations = cells_column_labels(columns = starts_with(c('total', 'n_')))) %>%
+  tab_style(
+    style = list(
+      cell_text(align = 'left')),
+    locations = cells_column_labels(columns = starts_with('p_'))) %>%
+  summary_rows(
+    groups = TRUE,
+    columns = vars(total, n_confirmed, n_probable, n_suspected, n_not_case, n_unknown),
+    fns = list('Region Total' = ~ sum(.)),
+    missing_text = "",
+    formatter = fmt_number,
+    decimals = 0) %>%
+  grand_summary_rows(
+    columns = vars(total, n_confirmed, n_probable, n_suspected, n_not_case, n_unknown),
+    fns = list('Grand Total' = ~ sum(.)),
+    missing_text = "",
+    formatter = fmt_number,
+    decimals = 0) %>% 
+  tab_source_note(
+    source_note = "(*) Red marks are coutries with less tha 30 confirmed cases. while lightcyan are between 30-50 confirmed cases") %>% 
+  tab_options(
+    column_labels.font.weight = 'bold',
+    row_group.font.weight = 'bold',
+    grand_summary_row.text_transform = 'uppercase',
+    data_row.padding = px(1),
+    row_group.padding = px(1),
+    summary_row.padding = px(1),
+    grand_summary_row.padding = px(1)) %>% 
+tab_style(
+        style = list(cell_fill(color = "lightcyan"),
+                               cell_text(weight="bold")),
+        locations = cells_body(columns = n_confirmed, 
+                                  rows = n_confirmed >=30 & n_confirmed < 50)) %>% 
+  tab_style(
+        style = list(cell_fill(color = "Red"),
+                               cell_text(weight="bold")),
+        locations = cells_body(columns = n_confirmed, 
+                                  rows = n_confirmed <30))
+
+t1<-gtbl_countries_covid_status %>% 
+  tab_header(
+    title = html(paste('Table<br>
+                 Number of confirmed, probable, suspected, not a cases and unknown covid-19 status of cases in MSF supported health facilities by country between December 2020 and December 31/2021.', format(date_max_report, "%d %b %Y"))))  
+ 
+
+gtsave(t1,
+       file.path(path.local, paste0('gtbl_cases_by_country_facet_continent', '.png'))) %>%
+  invisible()
+#t1
+```
+
+# Check topics for sub analysis
+
+```{r tb/HIV analysis}
+data_linelist_tb_hiv<-dta_linelist %>% 
+  #filter(MSF_covid_status=="Confirmed") %>% 
+  dplyr::select(MSF_tb_active,MSF_tb_resistant,MSF_tb_treatment_past,MSF_tb_type,MSF_hiv_status,MSF_hiv_cd4,MSF_hiv_viral_load, MSF_covid_status) %>% 
+  tbl_summary(by=MSF_covid_status, statistic = all_continuous()~c("{median}"))
+data_linelist_tb_hiv
+```
+
+
+```{r cormorbidties analysis}
+
+data_linelist_comorbid<-dta_linelist %>% 
+  
+  dplyr::select(Comcond_preg,Comcond_partum,MSF_complications, patcourse_admit,patcourse_iso,Comcond_present,MSF_covid_status, Comcond_cardi,
+           MSF_hypertension,
+          Comcond_liver,
+       Comcond_renal,
+         Comcond_diabetes,
+        Comcond_neuro,
+  Comcond_malig,
+ MSF_malaria,
+  MSF_hiv_status,
+       Comcond_immuno,
+  MSF_tb_active,
+Comcond_lung,
+MSF_measles) %>% 
+  tbl_summary(by=MSF_covid_status)
+
+data_linelist_comorbid
+#Comcond_other
+```
+
+
+```{r health care workers affected}
+data_linelist_hcw<-dta_linelist %>% 
+  dplyr::select(patinfo_occuhcw, patinfo_occuhcw_country) %>% 
+  tbl_summary()
+data_linelist_hcw
+```
+
+
+```{r treatment options provided}
+data_linelist_rx<-dta_linelist %>% 
+  dplyr::select(patcourse_admit,
+                patcourse_iso,
+                patcourse_vent,
+                patcourse_icu,
+                MSF_received_oxygen,
+                MSF_outcome_ICU_days,
+                MSF_outcome_ventilated_days,
+                outcome_patcourse_status,
+                MSF_covid_status) %>% 
+  tbl_summary(by=MSF_covid_status, statistic=all_continuous()~c("{median},[{p25}-{p75}]"))
+  
+data_linelist_rx
+```
+
+
+
+
+
+
+
+
+
+
